@@ -1,0 +1,8 @@
+{
+    "use_local": false,
+    "writer_local_model": "./models/amoral-qwen3-8b-q4_k_m.gguf",
+    "reader_local_model": "./models/amoral-qwen3-8b-q4_k_m.gguf",
+    "editor_local_model": "./models/amoral-qwen3-8b-q4_k_m.gguf",
+    "senior_writer1_local_model": "./models/amoral-qwen3-8b-q4_k_m.gguf",
+    "senior_writer2_local_model": "./models/amoral-qwen3-8b-q4_k_m.gguf"
+}
