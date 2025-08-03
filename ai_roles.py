@@ -346,6 +346,56 @@ class AISeniorWriter:
             self.llm = self.model_manager.wait_for_model(self.local_model_path, timeout)
         return self.llm is not None
 
+    def generate_outline(self, start_chapter, chapter_count, user_prompt, feedback=None, selected_characters=None):
+        """
+        生成完整的小说大纲
+        """
+        professional_background = "你是一位有20年以上经验的网文小说资深作家，擅长创作各种类型的长篇小说，具有丰富的写作经验和深厚的文学功底。"
+        
+        # 构造角色信息字符串
+        character_info = ""
+        if selected_characters:
+            character_info = "\n\n要求在大纲中包含以下角色的互动情节：\n"
+            for character in selected_characters:
+                character_info += f"角色名称：{character['name']}，角色背景关系：{character['background']}\n"
+            character_info += "\n请在创作中安排这些角色与主角之间的互动，互动内容可以包括但不限于（战斗、聊天、谈情等）。"
+        
+        if feedback:
+            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改小说大纲。\n\n小说整体要求：{user_prompt}\n\n反馈意见：{feedback}{character_info}\n\n请提供一个包含{chapter_count}章的小说大纲，从第{start_chapter}章开始。每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+        else:
+            prompt = f"{professional_background}\n请为小说创作一个包含{chapter_count}章的大纲，从第{start_chapter}章开始。\n\n小说整体要求：{user_prompt}{character_info}\n\n每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+        
+        if self.use_local and self.local_model_path:
+            # 等待模型加载完成
+            if not self.wait_for_model():
+                return "Error: Model loading timeout"
+                
+            # 获取最新加载的模型实例
+            self.llm = self.model_manager.get_model(self.local_model_path)
+                
+            if self.llm:
+                # 使用本地模型
+                return self._generate_with_local_model(prompt)
+            else:
+                return "Error: Failed to load local model"
+        else:
+            # 使用在线API
+            try:
+                import dashscope
+                from dashscope import Generation
+                response = Generation.call(
+                    model=self.model,
+                    prompt=prompt,
+                    max_tokens=4000,
+                    temperature=0.7
+                )
+                if response.status_code == 200:
+                    return response.output.text
+                else:
+                    return f"Error: {response.message}"
+            except Exception as e:
+                return f"Error: {str(e)}"
+
     def generate_character_design(self, novel_theme):
         """
         生成角色设计

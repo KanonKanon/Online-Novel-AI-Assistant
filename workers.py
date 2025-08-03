@@ -572,10 +572,16 @@ class OutlineWorker(QObject):
             if 'summary' in chapter and chapter['summary'].strip():
                 previous_chapters_context += f"第{chapter['chapter_num']}章 {chapter['title']}：{chapter['summary']}\n"
         
-        # 获取选中的角色信息
+        # 获取选中的角色信息（只在有选中角色时才传递）
         selected_characters = []
-        if hasattr(self, 'characters'):
-            selected_characters = self.characters
+        if hasattr(self, 'characters') and self.characters:
+            # 检查是否有选中的角色（checkbox被选中）
+            for character in self.characters:
+                if character.get('checkbox') and character['checkbox'].isChecked():
+                    selected_characters.append({
+                        'name': character['name'],
+                        'background': character['background']
+                    })
         
         # 逐个重新生成选中的章节
         for idx, chapter_num in enumerate(selected_chapter_nums):
@@ -604,7 +610,7 @@ class OutlineWorker(QObject):
                 self.user_prompt, 
                 previous_chapters_context,
                 feedback=feedback,
-                selected_characters=selected_characters
+                selected_characters=selected_characters if selected_characters else None
             )
             
             # 检查是否被中断
@@ -651,7 +657,7 @@ class OutlineWorker(QObject):
                     self.user_prompt, 
                     previous_chapters_context,
                     feedback=improvement_suggestion,
-                    selected_characters=selected_characters
+                    selected_characters=selected_characters if selected_characters else None
                 )
                 
                 # 检查是否被中断
@@ -693,11 +699,23 @@ class OutlineWorker(QObject):
         """
         生成完整的小说大纲
         """
+        # 获取选中的角色信息（只在有选中角色时才传递）
+        selected_characters = []
+        if hasattr(self, 'characters') and self.characters:
+            # 检查是否有选中的角色（checkbox被选中）
+            for character in self.characters:
+                if character.get('checkbox') and character['checkbox'].isChecked():
+                    selected_characters.append({
+                        'name': character['name'],
+                        'background': character['background']
+                    })
+        
         # 生成完整大纲
         full_outline = self.ai_senior_writer1.generate_outline(
             self.start_chapter, 
             self.chapter_count, 
-            self.user_prompt
+            self.user_prompt,
+            selected_characters=selected_characters if selected_characters else None
         )
         
         # 检查是否被中断
@@ -739,7 +757,8 @@ class OutlineWorker(QObject):
                 self.start_chapter, 
                 self.chapter_count, 
                 self.user_prompt, 
-                feedback=improvement_suggestion
+                feedback=improvement_suggestion,
+                selected_characters=selected_characters if selected_characters else None
             )
             
             # 检查是否被中断

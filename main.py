@@ -308,6 +308,11 @@ class MainWindow(QMainWindow):
             # 重新加载角色列表
             self.load_characters()
             
+            # 显示成功消息
+            success_msg = f"成功删除 {len(selected_names)} 个角色"
+            self.role_output.append(f"[系统] {success_msg}")
+            QMessageBox.information(self, "成功", success_msg)
+            
         except Exception as e:
             error_msg = f"删除角色失败：{str(e)}"
             self.role_output.append(f"[系统] {error_msg}")
@@ -646,20 +651,28 @@ class MainWindow(QMainWindow):
                 selected_items = character_list.selectedItems()
                 if selected_items:
                     character = selected_items[0].data(Qt.UserRole)
-                    name_edit.setText(character['name'])
-                    background_edit.setPlainText(character['background'])
-                    dialog.close()
+                    # 使用信号发射机制更新父对话框中的控件，避免直接访问可能已销毁的对象
+                    dialog.character_selected = character
+                    dialog.accept()
                 else:
                     QMessageBox.warning(dialog, "警告", "请先选择一个角色！")
             
             def cancel_selection():
-                dialog.close()
+                dialog.reject()
             
             select_button.clicked.connect(select_character)
             cancel_button.clicked.connect(cancel_selection)
             
-            # 显示对话框
-            result = dialog.exec_()
+            # 显示对话框并处理结果
+            if dialog.exec_() == QDialog.Accepted:
+                # 检查是否有选中的角色
+                if hasattr(dialog, 'character_selected'):
+                    character = dialog.character_selected
+                    # 在主线程中更新控件
+                    def update_parent_dialog():
+                        name_edit.setText(character['name'])
+                        background_edit.setPlainText(character['background'])
+                    QTimer.singleShot(0, update_parent_dialog)
         
         # 在主线程中创建并显示对话框
         from PyQt5.QtCore import QTimer
@@ -939,6 +952,33 @@ class MainWindow(QMainWindow):
             if use_local and local_models.get("editor"):
                 self.ai_editor.llm = model_manager.get_model(local_models.get("editor"))
                 
+            # Initialize Senior Writer instances
+            self.ai_senior_writer1 = AISeniorWriter(
+                api_key=settings.get("senior_writer1_key", ""), 
+                model=settings.get("senior_writer1_model", "qwen-plus"),
+                use_local=use_local,
+                local_model_path=local_models.get("senior_writer1") if use_local else None
+            )
+            
+            # 如果使用本地模型，更新模型实例
+            if use_local and local_models.get("senior_writer1"):
+                self.ai_senior_writer1.llm = model_manager.get_model(local_models.get("senior_writer1"))
+            
+            self.ai_senior_writer2 = AISeniorWriter(
+                api_key=settings.get("senior_writer2_key", ""), 
+                model=settings.get("senior_writer2_model", "qwen-plus"),
+                use_local=use_local,
+                local_model_path=local_models.get("senior_writer2") if use_local else None
+            )
+            
+            # 如果使用本地模型，更新模型实例
+            if use_local and local_models.get("senior_writer2"):
+                self.ai_senior_writer2.llm = model_manager.get_model(local_models.get("senior_writer2"))
+                
+            # 设置AISeniorWriter的主窗口引用
+            self.ai_senior_writer1.set_main_window(self)
+            self.ai_senior_writer2.set_main_window(self)
+                
         except FileNotFoundError:
             QMessageBox.warning(self, "警告", "未找到配置文件，使用默认设置。")
         except json.JSONDecodeError:
@@ -989,7 +1029,30 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请先输入小说内容要求！")
             return
         
-        # 检查是否有选中的章节
+        # 先检查是否有选中的章节（在加载大纲之前）
+        selected_chapters = []
+        # 创建一个临时列表保存当前选中章节的章节号
+        selected_chapter_nums = []
+        for chapter in self.novel_outline:
+            if chapter.get('checkbox') and chapter['checkbox'].isChecked():
+                selected_chapters.append(chapter)
+                selected_chapter_nums.append(chapter['chapter_num'])
+        
+        # 如果有选中的章节，则只重新生成这些章节
+        if selected_chapters:
+            reply = QMessageBox.question(self, "确认", f"确定要重新生成选中的{len(selected_chapters)}个章节吗？", 
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.regenerate_selected_chapters(selected_chapters, user_prompt, novel_type)
+            return
+        
+        # 加载小说大纲和已生成内容
+        self.load_novel_outline()
+        
+        # 加载角色信息
+        self.load_characters()
+        
+        # 重新检查是否有选中的章节（加载大纲后）
         selected_chapters = []
         for chapter in self.novel_outline:
             if chapter.get('checkbox') and chapter['checkbox'].isChecked():
@@ -1128,10 +1191,10 @@ class MainWindow(QMainWindow):
                 self.ai_senior_writer1,
                 self.ai_senior_writer2,
                 1,  # start_chapter参数在这里不使用，但需要传递
-                len(self.novel_outline),  # chapter_count参数在这里不使用，但需要传递
+                len(selected_chapter_nums),  # 只传递选中章节的数量
                 user_prompt,
                 self.novel_outline,
-                selected_chapter_nums,  # 传递选中的章节号列表
+                selected_chapters,  # 修复：直接传递原始selected_chapters而不是selected_chapter_nums
                 self.characters  # 传递角色信息
             )
             # 将完整大纲传递给worker，用于情节连贯性检查
@@ -1159,7 +1222,7 @@ class MainWindow(QMainWindow):
             # 如果创建线程或启动过程中出现异常，恢复按钮状态
             self.generate_btn.setEnabled(True)
             self.generate_btn.setText("生成大纲")
-            self.stop_outline_btn.setEnabled(False)  # 福永中断按钮
+            self.stop_outline_btn.setEnabled(False)  # 禁用中断按钮
             QMessageBox.critical(self, "错误", f"启动章节重新生成时出错：{str(e)}")
     
     def add_outline_item_single(self, chapter_num, title, summary):
