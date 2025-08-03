@@ -13,6 +13,9 @@ from PyQt5.QtGui import QTextCursor
 # 导入AI类
 from ai_roles import AIWriter, AIReader, AIEditor, AISeniorWriter, GlobalModelManager
 
+# 添加导入语句
+from PyQt5.QtCore import QThread  # 导入QThread类
+
 # 导入工作线程类
 from workers import OutlineWorker, ChapterQueueWorker, Worker
 
@@ -409,8 +412,7 @@ class MainWindow(QMainWindow):
             return
         
         self.log_message("小说主题检查通过", "debug")
-        # try:
-            # 显示生成进度信息到AI角色输出窗口
+        # 显示生成进度信息到AI角色输出窗口
         self.log_message("开始AI角色生成...")
         
         # 在新线程中生成内容
@@ -453,7 +455,6 @@ class MainWindow(QMainWindow):
                         self.role_output.append("[AI] " + ai_response)
                         self.log_message("AI生成角色成功，准备显示选择窗口...")
                         # 在主线程中处理结果并显示选择窗口
-                        self.log_message("调用after_character_generation方法...", "debug")
                         self.after_character_generation(ai_response, name_edit, background_edit)
                         self.log_message("after_character_generation方法调用完成", "debug")
                     
@@ -474,19 +475,19 @@ class MainWindow(QMainWindow):
                     QMessageBox.critical(self, "错误", f"AI生成角色失败：{str(e)}")
                 QTimer.singleShot(0, show_error)
     
-    @pyqtSlot(object)
-    def invoke_show_success(self, show_success):
-        """在主线程中执行show_success函数"""
-        self.log_message("进入invoke_show_success方法", "debug")
-        try:
-            show_success()
-            self.log_message("show_success函数执行完成", "debug")
-        except Exception as e:
-            self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
-            import traceback
-            self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
-        self.log_message("退出invoke_show_success方法", "debug")
-
+        @pyqtSlot(object)
+        def invoke_show_success(self, show_success):
+            """在主线程中执行show_success函数"""
+            self.log_message("进入invoke_show_success方法", "debug")
+            try:
+                show_success()
+                self.log_message("show_success函数执行完成", "debug")
+            except Exception as e:
+                self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
+                import traceback
+                self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
+            self.log_message("退出invoke_show_success方法", "debug")
+    
         def start_thread():
             self.log_message("启动工作线程...", "debug")
             thread = threading.Thread(target=generate_in_thread)
@@ -506,42 +507,14 @@ class MainWindow(QMainWindow):
                     self.log_message("工作线程已结束", "debug")
             # 5秒后检查线程状态
             QTimer.singleShot(5000, check_thread)
-
+    
         start_thread()
         self.log_message("<<< 退出generate_character_with_ai方法", "debug")
 
-    def check_thread(self):
-        # 检查线程是否仍在运行
-        # self.log_message("检查线程运行状态...", "debug")
-        if hasattr(self, 'outline_thread') and self.outline_thread.is_alive():
-            # self.log_message("大纲生成线程仍在运行...", "debug")
-            # 每5秒检查一次
-            QTimer.singleShot(5000, self.check_thread)
-        elif hasattr(self, 'chapter_thread') and self.chapter_thread.is_alive():
-            # self.log_message("章节生成线程仍在运行...", "debug")
-            # 每5秒检查一次
-            QTimer.singleShot(5000, self.check_thread)
-        else:
-            # self.log_message("所有线程已完成运行", "debug")
-            pass
-
-        QTimer.singleShot(0, start_thread)
-        self.log_message("已安排start_thread任务", "debug")
-        
-        self.log_message("<<< 退出generate_character_with_ai方法", "debug")
     
     def after_character_generation(self, ai_response, name_edit, background_edit):
         """AI生成角色后的处理"""
-        self.log_message("进入after_character_generation方法", "debug")
-
-        """AI生成角色后的处理"""
-        self.log_message("进入after_character_generation方法", "debug")
-        
-        # 添加调试信息
-        self.log_message(f"开始解析AI响应，响应长度: {len(ai_response)} 字符", "debug")
-        # 限制显示长度以避免输出过多内容
-        display_response = ai_response[:500] + "..." if len(ai_response) > 500 else ai_response
-        self.log_message(f"AI原始响应内容(前500字符):\n{display_response}", "debug")
+        # 解析AI响应
         
         # 解析AI响应
         characters = self.parse_ai_character_response(ai_response)
@@ -553,45 +526,29 @@ class MainWindow(QMainWindow):
         
         # 如果没有解析到角色，显示错误信息
         if not characters:
-            self.log_message("未解析到角色，准备显示警告信息", "debug")
             error_msg = "未能从AI响应中解析到角色信息"
-            self.log_message(f"{error_msg}，请检查AI返回内容", "error")
+            self.log_message(error_msg, "error")
             
             def show_warning():
-                self.log_message("显示解析失败警告对话框", "debug")
                 QMessageBox.warning(self, "警告", f"{error_msg}，请查看AI角色输出窗口中的详细信息")
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(0, show_warning)
             return
         
         # 创建选择对话框
-        # self.log_message("开始创建角色选择对话框...", "debug")
-        
         def create_dialog():
-            # self.log_message("准备创建角色选择对话框实例", "debug")
             dialog = QDialog(self)
             dialog.setWindowTitle("选择角色")
-            dialog.resize(500, 400)  # 设置窗口大小
+            dialog.resize(500, 400)
             
-            # 将对话框居中显示在主窗口中央
-            # self.log_message(f"主窗口几何信息: {self.geometry()}", "debug")
-            # self.log_message(f"主窗口中心点: ({self.geometry().center().x()}, {self.geometry().center().y()})", "debug")
-            # self.log_message(f"对话框尺寸: {dialog.width()}x{dialog.height()}", "debug")
-            
-            # 使用更可靠的方法居中显示对话框
+            # 将对话框居中显示
             desktop = QApplication.desktop()
             screen_center = desktop.screenGeometry().center()
             main_window_center = self.geometry().center()
-            
-            # 优先使用主窗口中心点，如果不可用则使用屏幕中心点
             center_point = main_window_center if main_window_center.x() > 0 and main_window_center.y() > 0 else screen_center
-            
             x = center_point.x() - dialog.width() // 2
             y = center_point.y() - dialog.height() // 2
-            # self.log_message(f"计算对话框位置: ({x}, {y})", "debug")
-            
-            dialog.move(max(0, x), max(0, y))  # 确保不会移出屏幕
-            # self.log_message(f"对话框移动后几何信息: {dialog.geometry()}", "debug")
+            dialog.move(max(0, x), max(0, y))
             
             layout = QVBoxLayout(dialog)
             
@@ -601,76 +558,60 @@ class MainWindow(QMainWindow):
             
             # 创建列表显示角色
             character_list = QListWidget()
-            character_list.setWordWrap(True)  # 启用自动换行
-            character_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 禁用横向滚动条
+            character_list.setWordWrap(True)
+            character_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             layout.addWidget(character_list)
             
             # 添加角色到列表
             added_count = 0
             for i, character in enumerate(characters):
-                # 添加详细检查
                 if not isinstance(character, dict):
-                    # self.log_message(f"警告：无效的角色数据类型: {type(character)}", "warning")
                     continue
-                        
+                
                 if 'name' not in character or 'background' not in character:
-                    # self.log_message(f"警告：角色数据缺少必要字段: {character}", "warning")
                     continue
-                        
-                    # 去除角色名称中的方括号
-                    name = character['name'].strip("[]【】")
-                    item_text = f"{name}\n{character['background']}"
-                    item = QListWidgetItem(item_text)
-                    item.setData(Qt.UserRole, character)
-                    character_list.addItem(item)
-                    # self.log_message(f"已添加角色到选择列表: {name}", "debug")
-                    added_count += 1
                 
-                # self.log_message(f"成功添加 {added_count} 个角色到列表", "debug")
+                # 去除角色名称中的方括号
+                name = character['name'].strip("[]【】")
+                item_text = f"{name}\n{character['background']}"
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.UserRole, character)
+                character_list.addItem(item)
+                added_count += 1
                 
-                # 添加按钮
-                button_layout = QHBoxLayout()
-                select_button = QPushButton("选择")
-                cancel_button = QPushButton("取消")
-                button_layout.addWidget(select_button)
-                button_layout.addWidget(cancel_button)
-                layout.addLayout(button_layout)
-                
-                # 连接按钮事件
-                def select_character():
-                    # self.log_message("用户点击选择按钮", "debug")
-                    selected_items = character_list.selectedItems()
-                    if selected_items:
-                        character = selected_items[0].data(Qt.UserRole)
-                        name_edit.setText(character['name'])
-                        background_edit.setPlainText(character['background'])
-                        # self.log_message(f"用户选择了角色: {character['name']}", "debug")
-                        dialog.close()
-                    else:
-                        # self.log_message("用户未选择角色，显示警告", "debug")
-                        QMessageBox.warning(dialog, "警告", "请先选择一个角色！")
-                
-                def cancel_selection():
-                    # self.log_message("用户点击取消按钮", "debug")
-                    # self.log_message("用户取消了角色选择", "debug")
-                    dialog.close()
-                
-                select_button.clicked.connect(select_character)
-                cancel_button.clicked.connect(cancel_selection)
-                
-                # self.log_message("准备显示角色选择窗口...", "debug")
-                # self.log_message(f"对话框显示前可见性: {dialog.isVisible()}", "debug")
-                # self.log_message("调用 dialog.exec_() 显示窗口...", "debug")
-                result = dialog.exec_()
-                # self.log_message(f"角色选择窗口已关闭，返回值: {result}", "debug")
-                # self.log_message(f"对话框关闭后可见性: {dialog.isVisible()}", "debug")
-                
-                # self.log_message("after_character_generation方法执行完毕", "debug")
+            # 添加按钮
+            button_layout = QHBoxLayout()
+            select_button = QPushButton("选择")
+            cancel_button = QPushButton("取消")
+            button_layout.addWidget(select_button)
+            button_layout.addWidget(cancel_button)
+            layout.addLayout(button_layout)
             
-            # 在主线程中创建并显示对话框
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, create_dialog)
-            # self.log_message("已安排create_dialog任务", "debug")
+            # 连接按钮事件
+            def select_character():
+                selected_items = character_list.selectedItems()
+                if selected_items:
+                    character = selected_items[0].data(Qt.UserRole)
+                    name_edit.setText(character['name'])
+                    background_edit.setPlainText(character['background'])
+                    dialog.close()
+                else:
+                    QMessageBox.warning(dialog, "警告", "请先选择一个角色！")
+            
+            def cancel_selection():
+                dialog.close()
+            
+            select_button.clicked.connect(select_character)
+            cancel_button.clicked.connect(cancel_selection)
+            
+            # 显示对话框
+            result = dialog.exec_()
+        
+        # 在主线程中创建并显示对话框
+        from PyQt5.QtCore import QTimer
+        self.log_message("准备安排create_dialog任务", "debug")
+        QTimer.singleShot(0, create_dialog)
+        self.log_message("已安排create_dialog任务", "debug")
     
     def parse_ai_character_response(self, response):
         """解析AI生成的角色响应"""
