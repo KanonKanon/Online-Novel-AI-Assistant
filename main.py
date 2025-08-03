@@ -205,8 +205,11 @@ class MainWindow(QMainWindow):
         self.save_character_btn.clicked.connect(self.save_characters)
         self.add_character_btn = QPushButton("添加角色")
         self.add_character_btn.clicked.connect(self.add_character)
+        self.delete_character_btn = QPushButton("删除角色")
+        self.delete_character_btn.clicked.connect(self.delete_character)
         character_button_layout.addWidget(self.save_character_btn)
         character_button_layout.addWidget(self.add_character_btn)
+        character_button_layout.addWidget(self.delete_character_btn)
         character_button_layout.addStretch()
         character_layout.addLayout(character_button_layout)
         
@@ -258,7 +261,58 @@ class MainWindow(QMainWindow):
         # 设置AISeniorWriter的主窗口引用
         self.ai_senior_writer1.set_main_window(self)
         self.ai_senior_writer2.set_main_window(self)
-
+    
+    def delete_character(self):
+        """Delete selected character by modifying the JSON file directly"""
+        # 获取当前选中的角色
+        selected_items = self.character_list.selectedItems()
+        if not selected_items:
+            return
+            
+        try:
+            # 读取角色.json文件中的现有数据
+            try:
+                with open("角色.json", "r", encoding="utf-8") as f:
+                    characters_data = json.load(f)
+            except FileNotFoundError:
+                characters_data = []
+            except json.JSONDecodeError:
+                QMessageBox.critical(self, "错误", "角色文件格式错误，无法读取数据")
+                return
+            
+            # 获取选中角色的名称
+            selected_names = []
+            for item in selected_items:
+                # 从列表项widget中获取角色名称
+                widget = self.character_list.itemWidget(item)
+                if widget:
+                    # 获取widget中的name_edit组件（右侧widget中的第一个子组件是名称编辑框）
+                    # widget结构: QHBoxLayout [checkbox, right_widget]
+                    # right_widget结构: QVBoxLayout [name_edit, background_edit]
+                    right_widget = widget.layout().itemAt(1).widget()
+                    if right_widget and right_widget.layout().count() > 0:
+                        name_edit = right_widget.layout().itemAt(0).widget()
+                        if name_edit:
+                            selected_names.append(name_edit.text())
+            
+            # 从角色数据中过滤掉选中的角色
+            filtered_characters = [
+                char for char in characters_data 
+                if char.get('name') not in selected_names
+            ]
+            
+            # 将更新后的数据写回文件
+            with open("角色.json", "w", encoding="utf-8") as f:
+                json.dump(filtered_characters, f, ensure_ascii=False, indent=4)
+            
+            # 重新加载角色列表
+            self.load_characters()
+            
+        except Exception as e:
+            error_msg = f"删除角色失败：{str(e)}"
+            self.role_output.append(f"[系统] {error_msg}")
+            QMessageBox.critical(self, "错误", error_msg)
+    
     def init_data_structures(self):
         """Initialize data structures"""
         self.novel_outline = []  # 存储大纲信息 [{chapter_num, title, summary, item_widget}]
