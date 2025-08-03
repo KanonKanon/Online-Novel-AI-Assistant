@@ -1071,43 +1071,40 @@ class MainWindow(QMainWindow):
             with open("novel_settings.json", "r", encoding="utf-8") as f:
                 novel_settings = json.load(f)
                 chapter_count = novel_settings.get("chapter_count", 30)
-                words_per_chapter = novel_settings.get("words_per_chapter", 1500)
         except FileNotFoundError:
             chapter_count = 30
-            words_per_chapter = 1500
         except json.JSONDecodeError:
-            chapter_count = 30
-            words_per_chapter = 1500
+            QMessageBox.warning(self, "警告", "小说参数配置文件格式错误！")
+            return
 
-        # 检查是否已有部分生成的大纲
-        start_chapter = 1
-        if self.novel_outline:
-            # 找到下一个需要生成的章节号
-            existing_chapters = [chapter['chapter_num'] for chapter in self.novel_outline]
-            existing_chapters.sort()
-            
-            # 检查是否是连续的章节序列
-            if existing_chapters == list(range(1, len(existing_chapters) + 1)):
-                # 如果是连续的，则从下一个章节开始
-                start_chapter = len(existing_chapters) + 1
-            else:
-                # 如果不是连续的，从第一个缺失的章节开始
-                for i in range(1, max(existing_chapters) + 2):
-                    if i not in existing_chapters:
-                        start_chapter = i
-                        break
+        # 清空大纲列表（如果没有选中的章节需要重新生成）
+        self.outline_list.clear()
+        self.novel_outline = []
         
-        # 如果已有完整的大纲，则询问是否重新生成
-        if start_chapter > chapter_count:
-            reply = QMessageBox.question(self, "确认", "大纲已经生成完成，是否重新生成？", 
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                return
+        # 确定起始章节号
+        start_chapter = 1
+        if hasattr(self, 'novel_outline') and self.novel_outline:
+            # 如果大纲列表不为空，找到最大的章节号并加1
+            max_chapter = max([chapter['chapter_num'] for chapter in self.novel_outline])
+            # 检查最后一章是否已有内容
+            last_chapter = next((chapter for chapter in self.novel_outline if chapter['chapter_num'] == max_chapter), None)
+            if last_chapter and last_chapter.get('content') and last_chapter['content'].strip():
+                # 如果最后一章已有内容，则从下一章开始
+                start_chapter = max_chapter + 1
             else:
-                # 清空现有大纲
-                self.outline_list.clear()
-                self.novel_outline = []
-                start_chapter = 1
+                # 如果最后一章没有内容，则从最后一章开始（重新生成）
+                start_chapter = max_chapter
+                # 清空最后一章的内容
+                if last_chapter:
+                    last_chapter['content'] = ""
+                    # 从大纲列表中移除最后一章（如果它在UI中）
+                    for i in range(self.outline_list.count()):
+                        item = self.outline_list.item(i)
+                        item_data = self.outline_list.itemWidget(item).findChild(QCheckBox).parent().chapter_data
+                        if item_data['chapter_num'] == max_chapter:
+                            self.outline_list.takeItem(i)
+                            break
+                self.novel_outline = [chapter for chapter in self.novel_outline if chapter['chapter_num'] < start_chapter]
 
         # 清理之前的线程和worker（如果存在）
         if hasattr(self, 'outline_thread') and self.outline_thread:
@@ -1158,7 +1155,37 @@ class MainWindow(QMainWindow):
             self.generate_btn.setText("生成大纲")
             self.stop_outline_btn.setEnabled(False)  # 禁用中断按钮
             QMessageBox.critical(self, "错误", f"启动大纲生成时出错：{str(e)}")
-    
+
+    def get_selected_chapters(self):
+        """获取选中的章节列表"""
+        selected_chapters = []
+        for chapter in self.novel_outline:
+            if chapter.get('checkbox') and chapter['checkbox'].isChecked():
+                selected_chapters.append(chapter)
+        return selected_chapters
+
+    def stop_chapter_generation(self):
+        """中断章节生成"""
+        # 确认是否要中断生成
+        reply = QMessageBox.question(self, "确认中断", "确定要中断当前的生成过程吗？", 
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # 设置worker的running标志为False以中断生成过程
+            if hasattr(self, 'chapter_queue_worker') and self.chapter_queue_worker:
+                try:
+                    self.chapter_queue_worker.running = False
+                except RuntimeError:
+                    # 如果worker对象已被删除，忽略异常
+                    pass
+            
+            # 更新UI状态
+            self.stop_generation_btn.setEnabled(False)
+            self.generate_chapter_btn.setEnabled(True)
+            self.generate_chapter_btn.setText("开始生成")
+            
+            # 显示中断信息
+            self.role_output.append("[系统] 章节生成已中断")
+
     def regenerate_selected_chapters(self, selected_chapters, user_prompt, novel_type):
         """重新生成选中的章节"""
         # 获取小说设置
@@ -1385,7 +1412,7 @@ class MainWindow(QMainWindow):
             return
         
         # 获取选中的章节
-        selected_chapters = self.get_selected_chapters()
+        selected_chapters = self.get_outline_selected_chapters()
         if not selected_chapters:
             QMessageBox.warning(self, "警告", "请选择要生成的章节！")
             return
@@ -1402,11 +1429,19 @@ class MainWindow(QMainWindow):
             self.novel_outline
         )
         
+        # 创建线程并移动worker到线程中
+        self.chapter_thread = QThread()
+        self.chapter_queue_worker.moveToThread(self.chapter_thread)
+        
         # 连接信号与槽
+        self.chapter_thread.started.connect(self.chapter_queue_worker.run)
         self.chapter_queue_worker.chapter_generated.connect(self.on_chapter_generated)
         self.chapter_queue_worker.progress.connect(self.update_progress)
         self.chapter_queue_worker.error.connect(self.show_error)
         self.chapter_queue_worker.finished.connect(self.generation_finished)
+        self.chapter_queue_worker.finished.connect(self.chapter_thread.quit)
+        self.chapter_queue_worker.finished.connect(self.chapter_queue_worker.deleteLater)
+        self.chapter_thread.finished.connect(self.chapter_thread.deleteLater)
         
         # 禁用生成按钮，启用停止按钮
         self.generate_chapter_btn.setEnabled(False)
@@ -1414,7 +1449,7 @@ class MainWindow(QMainWindow):
         self.stop_generation_btn.setEnabled(True)
         
         # 开始生成
-        self.chapter_queue_worker.start()
+        self.chapter_thread.start()
 
     def stop_chapter_generation(self):
         """中断章节生成"""
@@ -1460,9 +1495,9 @@ class MainWindow(QMainWindow):
             # 显示中断信息
             self.role_output.append("[系统] 大纲生成已中断")
 
-    def update_chapter_content_from_queue(self, chapter_num, chapter_title, content):
+    def on_chapter_generated(self, chapter_num, chapter_title, content):
         """
-        从队列中更新章节内容
+        处理章节生成完成事件
         """
         # 清理章节内容，移除AI生成的标记性内容
         cleaned_content = content
@@ -1502,7 +1537,7 @@ class MainWindow(QMainWindow):
             chapter_item = self.add_chapter_item(chapter_num, chapter_title, cleaned_content)
             self.chapter_items_map[chapter_num] = chapter_item
         
-        # === 新增代码：更新大纲列表相应章节的信息 ===
+        # 更新大纲列表相应章节的信息
         if chapter_outline:
             # 更新大纲列表中该章节的标题和摘要（如果需要）
             title_edit = chapter_outline.get('title_edit')
@@ -1525,6 +1560,48 @@ class MainWindow(QMainWindow):
         
         # 自动保存小说大纲
         self.save_novel_outline()
+
+    def get_outline_selected_chapters(self):
+        """获取大纲中选中的章节列表"""
+        selected_chapters = []
+        for chapter in self.novel_outline:
+            if chapter.get('checkbox') and chapter['checkbox'].isChecked():
+                selected_chapters.append(chapter)
+        return selected_chapters
+
+    def get_selected_chapters(self):
+        """
+        获取最终结果中选中的章节列表
+        """
+        selected_chapters = []
+        for item in self.final_result.selectedItems():
+            item_data = item.data(Qt.UserRole)
+            if item_data:
+                selected_chapters.append(item_data['chapter_num'])
+        return selected_chapters
+
+    def on_stop_chapter_generation(self):
+        """
+        中断章节生成
+        """
+        reply = QMessageBox.question(self, "确认中断", "确定要中断当前的章节生成过程吗？", 
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # 设置worker的running标志为False以中断生成过程
+            if hasattr(self, 'chapter_queue_worker') and self.chapter_queue_worker:
+                try:
+                    self.chapter_queue_worker.running = False
+                except RuntimeError:
+                    # 如果worker对象已被删除，忽略异常
+                    pass
+            
+            # 更新UI状态
+            self.generate_chapter_btn.setEnabled(True)
+            self.generate_chapter_btn.setText("开始生成")
+            self.stop_generation_btn.setEnabled(False)  # 禁用中断按钮
+            
+            # 显示中断信息
+            self.role_output.append("[系统] 章节生成已中断")
 
     def finish_chapter_generation_queue(self):
         """
@@ -1552,20 +1629,31 @@ class MainWindow(QMainWindow):
         # 在AI角色输出窗口中显示系统提示，替代弹窗
         self.role_output.append("[系统] 选中的章节已生成完成！")
 
-    def handle_chapter_queue_error(self, error_msg):
-        # 在AI角色输出窗口中显示系统提示，替代弹窗
-        self.role_output.append(f"[系统] 章节生成出错：{error_msg}")
+    def generation_finished(self):
+        """
+        章节生成完成处理
+        """
         self.generate_chapter_btn.setEnabled(True)
         self.generate_chapter_btn.setText("开始生成")
         self.stop_generation_btn.setEnabled(False)  # 禁用中断按钮
+        
+        # 清除worker引用，避免在中断后再次触发信号
+        self.chapter_queue_worker = None
+        
+        # 确保UI更新
+        self.final_result.update()
+        
+        # 在AI角色输出窗口中显示系统提示，替代弹窗
+        self.role_output.append("[系统] 选中的章节已生成完成！")
 
-    @pyqtSlot(object)
-    def invoke_show_success(self, func):
-        """在主线程中执行传入的函数"""
-        print(">>> PRINT: 进入invoke_show_success方法")  # 使用print确保输出
-        func()
-        print(">>> PRINT: 退出invoke_show_success方法")  # 使用print确保输出
-    
+    def get_outline_selected_chapters(self):
+        """获取大纲中选中的章节列表"""
+        selected_chapters = []
+        for chapter in self.novel_outline:
+            if chapter.get('checkbox') and chapter['checkbox'].isChecked():
+                selected_chapters.append(chapter)
+        return selected_chapters
+
     def log_message(self, message, msg_type="info"):
         """
         公共日志输出方法

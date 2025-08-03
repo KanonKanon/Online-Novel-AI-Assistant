@@ -41,6 +41,7 @@ class Worker(QObject):
             r'(\d+(?:\.\d+)?)\s*分',  # X.X分 或 X分
             r'评分[：:]\s*(\d+(?:\.\d+)?)',  # 评分：X.X
             r'打分[：:]\s*(\d+(?:\.\d+)?)',  # 打分：X.X
+            r'【最终评分：(\d+(?:\.\d+)?)分',  # 新格式：【最终评分：x.x分
         ]
         
         for pattern in patterns:
@@ -53,6 +54,24 @@ class Worker(QObject):
                 except ValueError:
                     continue
         return None
+
+    def extract_evaluation_content(self, evaluation_text):
+        """
+        从AI读者的评价中提取评价内容
+        """
+        import re
+        # 查找评价内容模式
+        patterns = [
+            r'【评价内容：\s*(.*?)】',  # 新格式：【评价内容：\nXXXX】
+            r'【评价内容】\s*【(.*?)】',  # 旧格式：【评价内容】\n【XXXX】
+            r'评价内容[：:]\s*(.*?)(?=\n\s*【|\*\*\*|$)',  # 评价内容：XXX
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, evaluation_text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return evaluation_text
     
     def run(self):
         try:
@@ -281,6 +300,24 @@ class ChapterQueueWorker(QObject):
                     continue
         return None
     
+    def extract_evaluation_content(self, evaluation_text):
+        """
+        从AI读者的评价中提取评价内容
+        """
+        import re
+        # 查找评价内容模式
+        patterns = [
+            r'【评价内容：\s*(.*?)】',  # 新格式：【评价内容：\nXXXX】
+            r'【评价内容】\s*【(.*?)】',  # 旧格式：【评价内容】\n【XXXX】
+            r'评价内容[：:]\s*(.*?)(?=\n\s*【|\*\*\*|$)',  # 评价内容：XXX
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, evaluation_text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return evaluation_text
+
     def run(self):
         try:
             # 如果使用本地模型，等待模型加载完成
@@ -365,27 +402,29 @@ class ChapterQueueWorker(QObject):
                     else:
                         content = self.ai_writer.generate_content(chapter_prompt)
                     # 在AI角色输出窗口只显示生成的小说正文内容，并用【】标记
-                    self.progress.emit("作家", f"【{chapter_title}】\n【{content}】")
+                    self.progress.emit("作家", f"【第{chapter_num}章： {chapter_title}】\n【章节正文：\n{content}】")
 
                     # AI读者评价内容
                     # 在AI角色输出窗口显示评价过程
                     self.progress.emit("读者", "### 评价中... ###")
                     evaluation = self.ai_reader.evaluate_content(content)
                     # 在AI角色输出窗口显示AI读者的评价内容，使用指定格式
-                    self.progress.emit("读者", f"【评价内容】\n【{evaluation}】")
+                    self.progress.emit("读者", f"【最终评分：x.x分（10分为满分）】\n【评价内容：\n{evaluation}】")
 
                     # 解析AI读者评分
                     reader_satisfied = False
                     rating = self.extract_rating(evaluation)
+                    evaluation_content = self.extract_evaluation_content(evaluation)
+                    
                     if rating is not None:
-                        self.progress.emit("读者", f"【评分：{rating}/10分】\n【修改意见：{evaluation}】")
+                        self.progress.emit("读者", f"【最终评分：{rating}/10分】\n【评价内容：\n{evaluation_content}】")
                     else:
-                        self.progress.emit("读者", f"【修改意见：{evaluation}】")
+                        self.progress.emit("读者", f"【评价内容：\n{evaluation_content}】")
                     
                     # 检查AI读者是否满意
                     reader_satisfied = False
                     if rating is not None:
-                        if rating >= 9.5:
+                        if rating >= 9.0:  # 修改为9.0分阈值
                             reader_satisfied = True
                     else:
                         # 如果无法提取评分，则使用原来的判断方法
@@ -401,8 +440,11 @@ class ChapterQueueWorker(QObject):
                             self.progress.emit("读者", f"### AI 读者对第{chapter_num}章评价不满意（评分{rating}/10分），需要重新生成 ###")
                         else:
                             self.progress.emit("读者", f"### AI 读者对第{chapter_num}章评价不满意，需要修改 ###")
-                        # 只将修改意见反馈给AI作家
-                        feedback = evaluation
+                        # 将修改意见反馈给AI作家，如果评分低于9.0分，包含评价内容
+                        if rating is not None and rating < 9.0:
+                            feedback = f"章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n读者评价：{evaluation_content}"
+                        else:
+                            feedback = evaluation_content
                         # 移除迭代次数限制，改为无限循环直到AI读者满意
                 # 检查是否因用户中断而退出循环
                 if not self.running:
@@ -412,7 +454,7 @@ class ChapterQueueWorker(QObject):
                 # 第一阶段总是成功完成（因为是无限循环直到满意）
                 # 检查是否有内容用于第二阶段
                 if not chapter_content:
-                    chapter_content = content_text if content_text else ""
+                    chapter_content = content if content else ""
                 if not chapter_content:
                     self.progress.emit("系统", f"第{chapter_num}章没有生成有效内容，跳过编辑审核阶段")
                     continue
@@ -457,7 +499,7 @@ class ChapterQueueWorker(QObject):
                             self.progress.emit("作家", "### 根据编辑意见修改中... ###")
                             edit_feedback = review
                             modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=edit_feedback)
-                            self.progress.emit("作家", f"【{chapter_title}】\n【{modified_content}】")
+                            self.progress.emit("作家", f"【第{chapter_num}章： {chapter_title}】\n【章节正文：\n{modified_content}】")
                             chapter_content = modified_content  # 更新内容供下一轮审核
                 # 检查是否因用户中断而退出循环
                 if not self.running:
@@ -468,11 +510,14 @@ class ChapterQueueWorker(QObject):
                 if not final_content:
                     final_content = chapter_content
                 
+                # 解析章节内容，提取章节标题
+                parsed_title, parsed_content = self._parse_chapter_content(chapter_content)
+                
                 # 将内容发送到最终结果列表（尽可能发送内容）
-                content_to_send = final_content or chapter_content or content_text
+                content_to_send = final_content or chapter_content
                 if content_to_send:
                     # 有内容可发送
-                    self.chapter_generated.emit(chapter_num, content_title, content_to_send)
+                    self.chapter_generated.emit(chapter_num, parsed_title, content_to_send)
                     # 记录已生成的章节
                     self.generated_chapters.add(chapter_num)
                     if final_content:
@@ -497,6 +542,31 @@ class ChapterQueueWorker(QObject):
         finally:
             # 确保总是发出finished信号
             self.finished.emit()
+
+    def _parse_chapter_content(self, content_text):
+        """
+        解析章节内容，提取章节标题和正文
+        """
+        import re
+        
+        # 提取章节标题
+        title_match = re.search(r'【第\d+章\s+(.*?)】', content_text)
+        title = title_match.group(1) if title_match else "待定章节"
+        
+        # 提取章节内容
+        content_match = re.search(r'【章节内容(.*?)】', content_text)
+        if not content_match:
+            # 如果上面的模式没有匹配到，尝试匹配通用的【】内容
+            content_match = re.search(r'【(.*?)】', content_text[title_match.end():] if title_match else content_text, re.DOTALL)
+        
+        content = content_match.group(1).strip() if content_match else content_text
+        
+        # 如果内容中包含"其它说明内容"部分，则截取到该部分之前
+        other_content_match = re.search(r'\*\*\*', content)
+        if other_content_match:
+            content = content[:other_content_match.start()].strip()
+            
+        return title, content
 
 
 class OutlineWorker(QObject):
@@ -912,12 +982,12 @@ class OutlineWorker(QObject):
                 # 清理内容，移除前后的空白字符
                 summary_content = summary_content.strip()
                 if summary_content:
-                    summary_match = type('Match', (), {'group': lambda x: summary_content})()
+                    summary_match = type('Match', (), {'group': lambda: summary_content})()
             else:
                 # 如果没有找到结束标记，则取标题后所有内容直到最后
                 summary_content = content_after_title.strip()
                 if summary_content:
-                    summary_match = type('Match', (), {'group': lambda x: summary_content})()
+                    summary_match = type('Match', (), {'group': lambda: summary_content})()
         
         summary = summary_match.group(1).strip() if summary_match and hasattr(summary_match, 'group') else "暂无内容梗概"
         

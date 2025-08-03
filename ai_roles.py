@@ -219,10 +219,10 @@ class AIWriter:
         
         if feedback:
             # 构造包含反馈的提示
-            full_prompt = f"{professional_background}\n{prompt}\n\n编辑反馈：{feedback}{character_info}\n\n请根据编辑反馈修改内容，确保内容满足用户要求和编辑建议。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节内容XXX...】\n***其它说明内容***\nXXX...."
+            full_prompt = f"{professional_background}\n{prompt}\n\n编辑反馈：{feedback}{character_info}\n\n请根据编辑反馈修改内容，确保内容满足用户要求和编辑建议。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX...."
         else:
             # 构造不包含反馈的提示
-            full_prompt = f"{professional_background}\n{prompt}{character_info}\n\n请创作满足用户要求的小说章节内容。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节内容XXX...】\n***其它说明内容***\nXXX...."
+            full_prompt = f"{professional_background}\n{prompt}{character_info}\n\n请创作满足用户要求的小说章节内容。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX...."
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -243,7 +243,7 @@ class AIWriter:
                 response = Generation.call(
                     model=self.model,
                     prompt=full_prompt,
-                    max_tokens=1500,
+                    max_tokens=2000,
                     temperature=0.7
                 )
                 if response.status_code == 200:
@@ -664,7 +664,7 @@ class AIReader:
 
     def review_content(self, content):
         professional_background = "你是一位专业的网文小说编辑，有丰富的文学鉴赏能力，能够准确指出作品的优缺点。"
-        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、逻辑性等方面进行评价，并给出1-10分的评分。请严格按照以下格式输出：【评价内容】\n[最终评分：X.X分]"
+        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、逻辑性等方面进行评价，并给出1-10分的评分。请严格按照以下格式输出：【最终评分：X.X分】\n【评价内容:\nXXX】"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -697,7 +697,7 @@ class AIReader:
         评估章节内容，返回评分和建议
         """
         professional_background = "你是一位专业的网文小说读者，有丰富的网络文学阅读经验，能够准确评价作品的优劣。"
-        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、节奏控制等方面进行评价，并给出1-10分的评分。如果评分低于9.5分，请给出具体的修改建议。"
+        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、节奏控制等方面进行评价，并给出1-10分的评分。如果评分低于9.5分，请给出具体的修改建议。\n\n请严格按照以下格式输出：\n【最终评分：x.x分（10分为满分）】\n【评价内容：\nXXXX】"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
