@@ -275,7 +275,9 @@ class AIWriter:
             # 使用llama.cpp生成内容
             output = self.llm(
                 prompt,
-                **gen_kwargs
+                max_tokens=2000,
+                temperature=0.7,
+                echo=False
             )
             
             # 提取生成的文本
@@ -502,7 +504,7 @@ class AISeniorWriter:
                 response = Generation.call(
                     model=self.model,
                     prompt=prompt,
-                    max_tokens=800,
+                    max_tokens=2000,
                     temperature=0.7
                 )
                 if response.status_code == 200:
@@ -559,7 +561,7 @@ class AISeniorWriter:
             # 使用llama.cpp生成内容
             output = self.llm(
                 prompt,
-                max_tokens=800,
+                max_tokens=2000,
                 temperature=0.7,
                 echo=False
             )
