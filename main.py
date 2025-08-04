@@ -6,9 +6,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGroupBox, QListWidget, QPushButton, QTextEdit, QLineEdit, 
                              QLabel, QComboBox, QMessageBox, QCheckBox, QDialog, 
                              QDialogButtonBox, QListWidgetItem, QProgressBar, QFileDialog,
-                             QDesktopWidget, QAction)
+                             QDesktopWidget, QAction, QAbstractItemView)
 from PyQt5.QtCore import Qt, QTimer, pyqtSlot, QMetaObject
 from PyQt5.QtGui import QTextCursor
+
 
 # 导入AI类
 from ai_roles import AIWriter, AIReader, AIEditor, AISeniorWriter, GlobalModelManager
@@ -197,6 +198,7 @@ class MainWindow(QMainWindow):
         self.character_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.character_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 禁用横向滚动条
         self.character_list.setWordWrap(True)  # 启用自动换行
+        self.character_list.setSelectionMode(QAbstractItemView.MultiSelection)  # 启用多选模式
         character_layout.addWidget(self.character_list)
         
         # 添加角色操作按钮
@@ -206,7 +208,7 @@ class MainWindow(QMainWindow):
         self.add_character_btn = QPushButton("添加角色")
         self.add_character_btn.clicked.connect(self.add_character)
         self.delete_character_btn = QPushButton("删除角色")
-        self.delete_character_btn.clicked.connect(self.delete_character)
+        self.delete_character_btn.clicked.connect(self.delete_selected_character)
         character_button_layout.addWidget(self.save_character_btn)
         character_button_layout.addWidget(self.add_character_btn)
         character_button_layout.addWidget(self.delete_character_btn)
@@ -262,14 +264,34 @@ class MainWindow(QMainWindow):
         self.ai_senior_writer1.set_main_window(self)
         self.ai_senior_writer2.set_main_window(self)
     
-    def delete_character(self):
-        """Delete selected character by modifying the JSON file directly"""
-        # 获取当前选中的角色
-        selected_items = self.character_list.selectedItems()
-        if not selected_items:
-            return
-            
+    def delete_selected_character(self):
+        """删除选中的角色"""
+        self.log_message("开始执行删除角色操作", "debug")
         try:
+            # 获取当前选中的角色 - 使用另一种方法检测选中项
+            selected_names = []
+            
+            # 遍历所有角色项，检查复选框状态
+            for i in range(self.character_list.count()):
+                item = self.character_list.item(i)
+                widget = self.character_list.itemWidget(item)
+                if widget:
+                    # 获取复选框组件（第一个子组件）
+                    checkbox = widget.layout().itemAt(0).widget()
+                    if checkbox and checkbox.isChecked():
+                        # 获取name_edit组件（右侧widget中的第一个子组件）
+                        right_widget = widget.layout().itemAt(1).widget()
+                        if right_widget and right_widget.layout().count() > 0:
+                            name_edit = right_widget.layout().itemAt(0).widget()
+                            if name_edit:
+                                selected_names.append(name_edit.text())
+            
+            self.log_message(f"选中了 {len(selected_names)} 个角色", "debug")
+            
+            if not selected_names:
+                self.log_message("没有选中的角色", "debug")
+                return
+
             # 读取角色.json文件中的现有数据
             try:
                 with open("角色.json", "r", encoding="utf-8") as f:
@@ -279,21 +301,6 @@ class MainWindow(QMainWindow):
             except json.JSONDecodeError:
                 QMessageBox.critical(self, "错误", "角色文件格式错误，无法读取数据")
                 return
-            
-            # 获取选中角色的名称
-            selected_names = []
-            for item in selected_items:
-                # 从列表项widget中获取角色名称
-                widget = self.character_list.itemWidget(item)
-                if widget:
-                    # 获取widget中的name_edit组件（右侧widget中的第一个子组件是名称编辑框）
-                    # widget结构: QHBoxLayout [checkbox, right_widget]
-                    # right_widget结构: QVBoxLayout [name_edit, background_edit]
-                    right_widget = widget.layout().itemAt(1).widget()
-                    if right_widget and right_widget.layout().count() > 0:
-                        name_edit = right_widget.layout().itemAt(0).widget()
-                        if name_edit:
-                            selected_names.append(name_edit.text())
             
             # 从角色数据中过滤掉选中的角色
             filtered_characters = [
@@ -315,9 +322,31 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             error_msg = f"删除角色失败：{str(e)}"
+            self.log_message(error_msg, "error")
             self.role_output.append(f"[系统] {error_msg}")
             QMessageBox.critical(self, "错误", error_msg)
-    
+
+    def save_characters(self):
+        """保存角色到文件"""
+        try:
+            # 准备保存的数据
+            characters_data = []
+            for character in self.characters:
+                characters_data.append({
+                    'name': character['name'],
+                    'background': character['background']
+                })
+            
+            # 保存到文件
+            with open("角色.json", "w", encoding="utf-8") as f:
+                json.dump(characters_data, f, ensure_ascii=False, indent=4)
+            
+            self.role_output.append("[系统] 角色信息已保存到 角色.json 文件！")
+        except Exception as e:
+            error_msg = f"保存角色信息失败：{str(e)}"
+            self.role_output.append(f"[系统] {error_msg}")
+            QMessageBox.critical(self, "错误", error_msg)
+
     def init_data_structures(self):
         """Initialize data structures"""
         self.novel_outline = []  # 存储大纲信息 [{chapter_num, title, summary, item_widget}]
@@ -1465,6 +1494,19 @@ class MainWindow(QMainWindow):
                     # 如果worker对象已被删除，忽略异常
                     pass
             
+            # 使用临时变量保存对当前线程和worker的引用
+            # 这样可以让线程自然结束，避免"QThread: Destroyed while thread is still running"错误
+            old_thread = None
+            old_worker = None
+            
+            if hasattr(self, 'chapter_thread') and self.chapter_thread:
+                old_thread = self.chapter_thread
+                self.chapter_thread = None  # 立即清除引用，防止其他地方误操作
+            
+            if hasattr(self, 'chapter_queue_worker') and self.chapter_queue_worker:
+                old_worker = self.chapter_queue_worker
+                self.chapter_queue_worker = None  # 立即清除引用，防止其他地方误操作
+            
             # 更新UI状态
             self.stop_generation_btn.setEnabled(False)
             self.generate_chapter_btn.setEnabled(True)
@@ -1472,6 +1514,60 @@ class MainWindow(QMainWindow):
             
             # 显示中断信息
             self.role_output.append("[系统] 章节生成已中断")
+            
+            # 注意：我们不主动终止线程，而是让其自然结束
+            # old_thread和old_worker会在线程结束后被自动清理
+    def generation_finished(self):
+        """
+        章节生成完成处理
+        """
+        # 安全地停止和清理线程
+        if hasattr(self, 'chapter_thread') and self.chapter_thread:
+            try:
+                if self.chapter_thread.isRunning():
+                    self.chapter_thread.quit()
+                    # 等待线程结束，但不要无限期等待
+                    self.chapter_thread.wait(3000)  # 最多等待3秒
+            except RuntimeError:
+                # 如果线程对象已被删除，忽略异常
+                pass
+        
+        # 彻底清理线程和worker对象
+        try:
+            # 断开所有信号连接
+            if hasattr(self, 'chapter_queue_worker') and self.chapter_queue_worker:
+                try:
+                    self.chapter_queue_worker.chapter_generated.disconnect()
+                    self.chapter_queue_worker.progress.disconnect()
+                    self.chapter_queue_worker.error.disconnect()
+                    self.chapter_queue_worker.finished.disconnect()
+                except:
+                    pass
+                self.chapter_queue_worker = None
+            
+            if hasattr(self, 'chapter_thread') and self.chapter_thread:
+                try:
+                    self.chapter_thread.started.disconnect()
+                    self.chapter_thread.finished.disconnect()
+                except:
+                    pass
+                
+                # 设置为None，确保被垃圾回收
+                self.chapter_thread = None
+        except:
+            # 发生任何异常都清除引用
+            self.chapter_queue_worker = None
+            self.chapter_thread = None
+        
+        self.generate_chapter_btn.setEnabled(True)
+        self.generate_chapter_btn.setText("开始生成")
+        self.stop_generation_btn.setEnabled(False)  # 禁用中断按钮
+        
+        # 确保UI更新
+        self.final_result.update()
+        
+        # 在AI角色输出窗口中显示系统提示，替代弹窗
+        self.role_output.append("[系统] 选中的章节已生成完成！")
 
     def stop_outline_generation(self):
         """中断大纲生成"""
@@ -1537,21 +1633,63 @@ class MainWindow(QMainWindow):
             chapter_item = self.add_chapter_item(chapter_num, chapter_title, cleaned_content)
             self.chapter_items_map[chapter_num] = chapter_item
         
-        # 更新大纲列表相应章节的信息
+        # 将内容关联到大纲列表中的相应章节，不更新标题
         if chapter_outline:
-            # 更新大纲列表中该章节的标题和摘要（如果需要）
-            title_edit = chapter_outline.get('title_edit')
-            summary_edit = chapter_outline.get('summary_edit')
-            
-            if title_edit:
-                title_edit.setText(chapter_title)  # 更新标题
+            # 保存章节内容到大纲数据结构中（正确保存到content字段）
+            chapter_outline['content'] = cleaned_content
+    
+        # 强制更新UI
+        self.final_result.repaint()
+        self.final_result.scrollToBottom()
         
-            if summary_edit:
-                # 使用新生成的内容更新摘要（提取前几行作为摘要）
-                summary = "\n".join(cleaned_content.split('\n')[:3])
-                summary_edit.setPlainText(summary)  # 更新摘要
-                
-            # 保存章节内容到大纲数据结构中
+        # 自动保存小说大纲
+        self.save_novel_outline()
+
+    def update_chapter_content_from_queue(self, chapter_num, chapter_title, content):
+        """
+        从队列中更新章节内容
+        """
+        # 清理章节内容，移除AI生成的标记性内容
+        cleaned_content = content
+        # 移除常见的AI标记内容
+        import re
+        # 移除以【】包围的标记内容
+        cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
+        # 移除以[]包围的标记内容（英文方括号）
+        cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
+        # 清理多余的空白行
+        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        
+        # 查找该章节在大纲中的信息
+        chapter_outline = None
+        for outline in self.novel_outline:
+            if outline['chapter_num'] == chapter_num:
+                chapter_outline = outline
+                break
+    
+        if chapter_outline:
+            chapter_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        else:
+            chapter_title = f"第{chapter_num}章"
+        
+        # 计算字数
+        char_count = len(cleaned_content.strip()) if cleaned_content else 0
+        chapter_title_with_count = f"{chapter_title}（本章正文共{char_count}字）"
+        
+        # 检查是否已经存在该章节项
+        if chapter_num in self.chapter_items_map:
+            # 更新现有项
+            chapter_item = self.chapter_items_map[chapter_num]
+            chapter_item['title_label'].setText(chapter_title_with_count)
+            chapter_item['content_text'].setPlainText(cleaned_content)
+        else:
+            # 添加新项
+            chapter_item = self.add_chapter_item(chapter_num, chapter_title, cleaned_content)
+            self.chapter_items_map[chapter_num] = chapter_item
+        
+        # 将内容关联到大纲列表中的相应章节，不更新标题
+        if chapter_outline:
+            # 保存章节内容到大纲数据结构中（正确保存到content字段）
             chapter_outline['content'] = cleaned_content
     
         # 强制更新UI
@@ -1633,8 +1771,27 @@ class MainWindow(QMainWindow):
         """
         章节生成完成处理
         """
+        # 更新UI状态
         self.generate_chapter_btn.setEnabled(True)
         self.generate_chapter_btn.setText("开始生成")
+        self.stop_generation_btn.setEnabled(False)  # 禁用中断按钮
+        
+        # 确保UI更新
+        self.final_result.update()
+        
+        # 在AI角色输出窗口中显示系统提示，替代弹窗
+        self.role_output.append("[系统] 选中的章节已生成完成！")
+        
+        # 注意：线程和worker对象会通过信号槽机制自动清理
+        # self.chapter_queue_worker.finished.connect(self.chapter_thread.quit)
+        # self.chapter_queue_worker.finished.connect(self.chapter_queue_worker.deleteLater)
+        # self.chapter_thread.finished.connect(self.chapter_thread.deleteLater)
+        # 所以我们不需要手动清理线程和worker对象
+
+    def stop_outline_generation(self):
+        """
+        中断大纲生成
+        """
         self.stop_generation_btn.setEnabled(False)  # 禁用中断按钮
         
         # 清除worker引用，避免在中断后再次触发信号
@@ -1683,6 +1840,18 @@ class MainWindow(QMainWindow):
             self.role_output.setTextCursor(cursor)
         QTimer.singleShot(0, scroll_to_end)
 
+    @pyqtSlot(object)
+    def invoke_show_success(self, func):
+        """在主线程中执行传入的函数"""
+        print(">>> PRINT: 进入invoke_show_success方法")  # 使用print确保输出
+        try:
+            func()
+            print(">>> PRINT: 退出invoke_show_success方法")  # 使用print确保输出
+        except Exception as e:
+            print(f"Error in invoke_show_success: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
     def load_novel_outline(self):
         """加载小说大纲"""
         try:
@@ -2127,26 +2296,26 @@ class MainWindow(QMainWindow):
 
     def update_outline_item_single(self, chapter_num, title, summary):
         """更新单个大纲项"""
-        # 查找对应章节的数据结构
-        # 注意：这里chapter_num是章节号
-        chapter_to_update = None
+        # 查找对应章节
+        target_chapter = None
         for chapter in self.novel_outline:
             if chapter['chapter_num'] == chapter_num:
-                chapter_to_update = chapter
+                target_chapter = chapter
                 break
         
-        if chapter_to_update:
-            # 更新章节信息
-            chapter_to_update['title'] = title
-            chapter_to_update['summary'] = summary
+        # 如果找到了对应章节，则更新其内容
+        if target_chapter:
+            # 更新内存中的数据
+            target_chapter['title'] = title
+            target_chapter['summary'] = summary
             
-            # 更新UI控件
-            if 'title_edit' in chapter_to_update and chapter_to_update['title_edit']:
-                chapter_to_update['title_edit'].setText(f"第{chapter_num}章 {title}")
-            if 'summary_edit' in chapter_to_update and chapter_to_update['summary_edit']:
-                chapter_to_update['summary_edit'].setPlainText(summary)
+            # 更新UI中的显示
+            if 'title_edit' in target_chapter and target_chapter['title_edit']:
+                target_chapter['title_edit'].setText(title)
+            if 'summary_edit' in target_chapter and target_chapter['summary_edit']:
+                target_chapter['summary_edit'].setPlainText(summary)
             
-            # 保存大纲到文件
+            # 保存到文件
             self.save_novel_outline()
             
             # 重新加载角色列表（可能有新角色添加）

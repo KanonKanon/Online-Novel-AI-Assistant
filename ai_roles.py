@@ -458,45 +458,46 @@ class AISeniorWriter:
                 import dashscope
                 from dashscope import Generation
                 self.log_debug("准备调用Generation.call方法")
-                self.log_debug(f"调用参数: model={self.model}, max_tokens=1000, temperature=0.7")
+                self.log_debug(f"调用参数: model={self.model}, max_tokens=2000, temperature=0.7")
                 self.log_debug(f"提示内容长度: {len(prompt)} 字符")
                 self.log_debug("开始调用Generation.call方法")
-                # 添加超时参数，防止无限期等待
+                
+                # 调用DashScope API
                 response = Generation.call(
                     model=self.model,
                     prompt=prompt,
-                    max_tokens=1000,
-                    temperature=0.7,
-                    timeout=60  # 设置60秒超时
+                    max_tokens=2000,  # 增加max_tokens以确保生成足够的内容
+                    temperature=0.7
                 )
-                self.log_debug("Generation.call方法调用完成")
-                self.log_debug(f"API响应状态码: {response.status_code}")
-                self.log_debug(f"完整响应对象类型: {type(response)}")
-                self.log_debug(f"完整响应对象: {response}")
                 
+                self.log_debug("Generation.call方法调用完成")
+                self.log_debug(f"响应对象类型: {type(response)}")
+                
+                # 检查响应状态
+                if hasattr(response, 'status_code'):
+                    self.log_debug(f"响应状态码: {response.status_code}")
+                
+                # 处理响应
                 if response.status_code == 200:
-                    self.log_debug("响应状态码为200，尝试获取响应文本")
-                    self.log_debug(f"response.output类型: {type(response.output)}")
-                    self.log_debug(f"response.output内容: {response.output}")
-                    if hasattr(response.output, 'text'):
-                        result = response.output.text
-                        self.log_debug(f"获取到的文本长度: {len(result) if result else 0}")
-                        self.log_debug(f"获取到的文本前100字符: {result[:100] if result else 'None'}")
-                        print(">>> PRINT: 准备返回正常结果")  # 使用print确保输出
-                        self.log_debug("<<< 正常退出generate_character_design方法")
-                        return result
-                    else:
-                        self.log_debug("response.output没有text属性")
-                        print(">>> PRINT: 准备返回错误结果：没有text属性")  # 使用print确保输出
-                        self.log_debug("<<< 错误退出generate_character_design方法")
-                        return "Error: Response output has no text attribute"
+                    self.log_debug("响应状态码为200，处理响应内容")
+                    ai_response = response.output.text
+                    self.log_debug(f"AI响应内容长度: {len(ai_response)} 字符")
+                    self.log_debug(f"AI响应前100字符: {ai_response[:100]}")
+                    print(">>> PRINT: 准备返回正常结果")  # 使用print确保输出
+                    self.log_debug("<<< 正常退出generate_character_design方法")
+                    return ai_response
                 else:
-                    self.log_debug(f"响应状态码不是200，返回错误信息: {response.message}")
-                    print(">>> PRINT: 准备返回错误结果：状态码不是200")  # 使用print确保输出
-                    self.log_debug("<<< 错误退出generate_character_design方法")
-                    return f"Error: {response.message}"
+                    self.log_debug(f"API调用失败，状态码: {response.status_code}")
+                    error_msg = f"API调用失败，状态码: {response.status_code}"
+                    if hasattr(response, 'message'):
+                        error_msg += f"，错误信息: {response.message}"
+                    self.log_debug(error_msg)
+                    print(">>> PRINT: 准备返回错误结果：API调用失败")  # 使用print确保输出
+                    self.log_debug("<<< 异常退出generate_character_design方法")
+                    return f"Error: {error_msg}"
+                    
             except ImportError as e:
-                self.log_debug(f"导入dashscope库失败: {str(e)}")
+                self.log_debug(f"导入dashscope失败: {str(e)}")
                 print(">>> PRINT: 准备返回错误结果：导入失败")  # 使用print确保输出
                 self.log_debug("<<< 异常退出generate_character_design方法")
                 return f"Error: Failed to import dashscope: {str(e)}"

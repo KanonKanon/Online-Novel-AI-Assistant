@@ -589,6 +589,7 @@ class OutlineWorker(QObject):
         self.selected_chapters = selected_chapters
         self.characters = characters
         self.running = True  # 用于控制线程是否继续运行
+        self.characters_updated = pyqtSignal()  # 新增信号：角色信息更新
     
     def _model_progress_callback(self, message):
         """
@@ -631,27 +632,8 @@ class OutlineWorker(QObject):
             else:
                 selected_chapter_nums.append(item)
         
-        # 收集前面章节的内容作为上下文
-        previous_chapters_context = ""
-        for i in range(len(self.novel_outline)):
-            chapter = self.novel_outline[i]
-            # 只收集选中章节之前的章节内容
-            if chapter['chapter_num'] in selected_chapter_nums:
-                break
-            # 确保章节有内容才添加到上下文
-            if 'summary' in chapter and chapter['summary'].strip():
-                previous_chapters_context += f"第{chapter['chapter_num']}章 {chapter['title']}：{chapter['summary']}\n"
-        
-        # 获取选中的角色信息（只在有选中角色时才传递）
-        selected_characters = []
-        if hasattr(self, 'characters') and self.characters:
-            # 检查是否有选中的角色（checkbox被选中）
-            for character in self.characters:
-                if character.get('checkbox') and character['checkbox'].isChecked():
-                    selected_characters.append({
-                        'name': character['name'],
-                        'background': character['background']
-                    })
+        # 按章节号排序，确保按顺序生成
+        selected_chapter_nums.sort()
         
         # 逐个重新生成选中的章节
         for idx, chapter_num in enumerate(selected_chapter_nums):
@@ -661,6 +643,20 @@ class OutlineWorker(QObject):
                 
             # 发送进度信息
             self.progress.emit("系统", f"正在重新生成第{chapter_num}章...")
+            
+            # 收集前面章节的内容作为上下文，确保情节连贯性
+            previous_chapters_context = ""
+            for i in range(1, chapter_num):
+                # 查找第i章的内容
+                chapter_info = None
+                for chapter in self.novel_outline:
+                    if chapter['chapter_num'] == i:
+                        chapter_info = chapter
+                        break
+                
+                # 如果找到了前一章的信息，则添加到上下文
+                if chapter_info and 'summary' in chapter_info and chapter_info['summary'].strip():
+                    previous_chapters_context += f"第{i}章 {chapter_info['title']}：{chapter_info['summary']}\n"
             
             # 获取当前章节的标题和梗概（如果存在）
             current_chapter_info = None
@@ -673,6 +669,17 @@ class OutlineWorker(QObject):
             feedback = None
             if current_chapter_info and current_chapter_info.get('summary'):
                 feedback = f"原章节标题：{current_chapter_info['title']}\n原章节梗概：{current_chapter_info['summary']}\n请根据以上内容重新创作。"
+            
+            # 获取选中的角色信息（只在有选中角色时才传递）
+            selected_characters = []
+            if hasattr(self, 'characters') and self.characters:
+                # 检查是否有选中的角色（checkbox被选中）
+                for character in self.characters:
+                    if character.get('checkbox') and character['checkbox'].isChecked():
+                        selected_characters.append({
+                            'name': character['name'],
+                            'background': character['background']
+                        })
             
             # 生成单章大纲
             chapter_outline = self.ai_senior_writer1.generate_chapter_outline(
@@ -697,7 +704,7 @@ class OutlineWorker(QObject):
             evaluation = self.ai_senior_writer2.evaluate_chapter_outline(
                 chapter_outline, 
                 self.user_prompt, 
-                previous_chapters_context
+                previous_chapters_context  # 使用前面章节的上下文进行评估
             )
             
             # 检查是否被中断
@@ -756,11 +763,8 @@ class OutlineWorker(QObject):
             # 发射单章大纲生成信号
             self.chapter_outline_generated.emit(chapter_num, title, summary)
             
-            # 更新上下文，添加新生成的章节内容
+            # 更新上下文，添加新生成的章节内容（用于后续章节的连贯性）
             previous_chapters_context += f"第{chapter_num}章 {title}：{summary}\n"
-            
-            # 提取并保存本章的角色信息
-            self._extract_and_save_single_chapter_characters(characters)
             
             # 提取并保存本章的角色信息
             self._extract_and_save_single_chapter_characters(characters)
@@ -1077,6 +1081,7 @@ class OutlineWorker(QObject):
                     with open("角色.json", "w", encoding="utf-8") as f:
                         json.dump(existing_characters, f, ensure_ascii=False, indent=4)
                     self.progress.emit("系统", f"已提取并保存 {new_characters_added} 个新角色到角色列表中")
+                    self.characters_updated.emit()  # 发射角色更新信号
                 except Exception as e:
                     self.progress.emit("系统", f"保存角色信息时出错: {str(e)}")
 
@@ -1106,8 +1111,10 @@ class OutlineWorker(QObject):
                     'background': background.strip()
                 })
             
-            # 如果没有匹配到新格式，尝试匹配使用英文逗号的格式
+            # 如果没有匹配到新格式，尝试匹配旧格式
             if not character_matches:
+                # 匹配每个角色 <角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>
+                # 使用英文逗号的格式
                 character_pattern = r'<角色名称：(.*?)，角色说明\(包括角色能力，社会关系，与主角之间关系等等描述内容\)：(.*?)>'
                 character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
                 for name, background in character_matches:
