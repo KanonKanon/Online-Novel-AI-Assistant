@@ -253,6 +253,52 @@ class AIWriter:
             except Exception as e:
                 return f"Error: {str(e)}"
     
+    def generate_worldview(self, prompt):
+        """
+        专门用于生成世界观内容的方法
+        """
+        # 添加世界观构建师背景设定
+        background = "你是一位专业的小说世界观构建师，擅长创造各种类型的奇幻世界，具有丰富的世界构建经验和深厚的文学功底。"
+        
+        # 构造完整提示词
+        full_prompt = f"{background}\n{prompt}"
+        
+        print(f"[调试] AIWriter.generate_worldview - use_local: {self.use_local}")
+        print(f"[调试] AIWriter.generate_worldview - local_model_path: {self.local_model_path}")
+        print(f"[调试] AIWriter.generate_worldview - model: {self.model}")
+        
+        if self.use_local and self.local_model_path:
+            # 等待模型加载完成
+            print("[调试] AIWriter.generate_worldview - 使用本地模型")
+            if not self.wait_for_model():
+                return "Error: Model loading timeout"
+                
+            # 获取最新加载的模型实例
+            self.llm = self.model_manager.get_model(self.local_model_path)
+                
+            if self.llm:
+                # 使用本地模型
+                print("[调试] AIWriter.generate_worldview - 调用本地模型生成内容")
+                return self._generate_with_local_model(full_prompt, max_tokens=2500, temperature=0.8)
+            else:
+                return "Error: Failed to load local model"
+        else:
+            # 使用在线API
+            print("[调试] AIWriter.generate_worldview - 使用在线API")
+            try:
+                response = Generation.call(
+                    model=self.model,
+                    prompt=full_prompt,
+                    max_tokens=2500,
+                    temperature=0.8
+                )
+                if response.status_code == 200:
+                    return response.output.text
+                else:
+                    return f"Error: {response.message}"
+            except Exception as e:
+                return f"Error: {str(e)}"
+    
     def _generate_with_local_model(self, prompt, max_tokens=None, temperature=None, stop=None):
         """
         使用本地模型生成内容
@@ -528,13 +574,33 @@ class AISeniorWriter:
                 character_info += f"角色名称：{character['name']}，角色背景关系：{character['background']}\n"
             character_info += "\n请在创作中安排这些角色与主角之间的互动，互动内容可以包括但不限于（战斗、聊天、谈情等）。"
         
+        # 更严格的格式要求说明
+        format_requirements = """请严格按照以下格式输出，格式要求如下：
+1. 使用【】方括号包围各个部分
+2. 章节标题必须使用"第X章："格式开头
+3. 梗概内容部分必须以"【梗概内容： XXX】"格式输出
+4. 角色部分必须以"【本章出现角色："开头，每个角色使用"<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>"格式
+5. 角色说明必须包含角色能力、社会关系、与主角之间关系等描述内容
+6. 最后以"***其它说明或描述内容***"结尾，后面可以添加额外内容
+
+示例格式：
+【第1章： 初入仙途】
+【梗概内容： 主角林峰在一次意外中穿越到修仙界，发现自己拥有下品灵根。在天机AI的帮助下，他开始了自己的修仙之路。】
+【本章出现角色：
+<角色名称：林峰,角色说明(主角, 地球2050年意外穿越到修仙界的年轻人，拥有下品灵根，脑中有AI助手"天机", 通过结合现代科技与修真知识不断创新)>
+<角色名称：天机AI,角色说明(存储有2050年地球科技知识的人工智能, 主角的得力助手，帮助主角进行各种发明创造)>
+】
+***其它说明或描述内容***
+本章为小说开篇，主要介绍主角背景和世界观设定。
+"""
+        
         if feedback:
-            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n反馈意见：{feedback}{character_info}\n\n请提供第{chapter_num}章的标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：【第{chapter_num}章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n反馈意见：{feedback}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
         else:
             if previous_chapters:
-                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}{character_info}\n\n请提供第{chapter_num}章的标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：【第{chapter_num}章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
             else:
-                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n这是小说的开始章节{character_info}，请提供第{chapter_num}章的标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：【第{chapter_num}章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称"
+                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n这是小说的开始章节{character_info}，请提供第{chapter_num}章的标题和约500字的梗概，并列出本章出现的角色及其背景关系。\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -573,7 +639,7 @@ class AISeniorWriter:
         professional_background = "你是一位专业的网文小说编辑，有20年以上的编辑经验，擅长评估各种类型的小说章节大纲，具有敏锐的文学洞察力和丰富的市场经验。"
         
         # 构造评估提示
-        prompt = f"{professional_background}\n请评估以下章节大纲：\n\n{outline}\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n请从以下三个核心维度进行重点评估：\n1. 角色名称一致性：检查主角、配角的名字是否与前几章保持一致，没有被串改\n2. 情节连贯性：评估与前面章节的情节衔接是否自然流畅，逻辑是否连贯\n3. 创新性：评估情节或物品设定是否有足够的创新性，是否能够使读者感到'脑洞'大开\n\n评分标准（满分10分）：\n- 9.0分以上：大纲质量优秀，可以直接使用\n- 8.0-8.9分：大纲质量良好，稍作修改即可使用\n- 7.0-7.9分：大纲质量一般，需要修改\n- 7.0分以下：大纲质量较差，需要大幅修改\n\n特别注意：\n1. 在角色名称一致性对比时，要对比至少前两个章节（第一章、第二章除外）\n2. 第一章着重参考小说整体要求\n3. 第二章则要参考第一章梗概与小说整体要求\n4. 必须确保所有角色名称在整个小说中保持一致\n5. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n\n请严格按照以下格式输出：\n【最终评分：XX分】\n【评价内容：“XXX”】\n【改进意见：“XXX”】\n***其它说明或描述内容***\n评分必须严格按照10分制标准，评分范围为0-10分，保留一位小数。"
+        prompt = f"{professional_background}\n请评估以下章节大纲：\n\n{outline}\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n请从以下四个核心维度进行重点评估：\n1. 角色的一致性：检查主角、配角的名字是否与前几章保持一致，没有被串改\n2. 本章内容是否与前面章节内容重复：评估当前章节是否与前面章节有过多重复内容\n3. 本章内容创新性：评估情节或物品设定是否有足够的创新性，是否能够使读者感到'脑洞'大开\n4. 内容是否足够吸引读者：评估当前章节是否具有足够的吸引力，能否让读者产生继续阅读的欲望\n\n评分标准（满分10分）：\n- 9.0分以上：大纲质量优秀，可以直接使用\n- 8.0-8.9分：大纲质量良好，稍作修改即可使用\n- 7.0-7.9分：大纲质量一般，需要修改\n- 7.0分以下：大纲质量较差，需要大幅修改\n\n特别注意：\n1. 在角色名称一致性对比时，要对比至少前两个章节（第一章、第二章除外）\n2. 第一章着重参考小说整体要求\n3. 第二章则要参考第一章梗概与小说整体要求\n4. 必须确保所有角色名称在整个小说中保持一致\n5. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n\n请严格按照以下格式输出：\n【最终评分：XX分】\n【评价内容：“XXX”】\n【改进意见：“XXX”】\n***其它说明或描述内容***\n评分必须严格按照10分制标准，评分范围为0-10分，保留一位小数。"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成

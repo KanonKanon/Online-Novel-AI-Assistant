@@ -378,13 +378,28 @@ class ChapterQueueWorker(QObject):
                         self.error.emit(error_msg)
                         return  # 停止生成任务
                 
-                # 构造章节提示
+                # 构造章节提示 - 优化提示词，包含前面所有章节标题和前一章梗概
                 if chapter_num == 1:
-                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的第一章，要求约{self.words_per_chapter}字。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n小说开头需要吸引读者，建立故事基调并引入主要角色。"
+                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的第一章，要求约{self.words_per_chapter}字，**严格要求生成内容不少于{self.words_per_chapter}字**。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n小说开头需要吸引读者，建立故事基调并引入主要角色。"
                 elif chapter_num == self.chapter_count:
-                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的最后一章（第{chapter_num}章），要求约{self.words_per_chapter}字。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n这是小说的结尾，需要给故事一个完整且令人满意的结局，解决所有主要冲突。"
+                    # 收集前面所有章节的标题
+                    previous_chapters_titles = "\n".join([f"第{c['chapter_num']}章: {c['title']}" for c in self.novel_outline if c['chapter_num'] < chapter_num])
+                    
+                    # 获取前一章的梗概
+                    prev_chapter_summary = prev_chapter.get('summary', '') if prev_chapter else ''
+                    
+                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的最后一章（第{chapter_num}章），要求约{self.words_per_chapter}字，**严格要求生成内容不少于{self.words_per_chapter}字**。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n这是小说的结尾，需要给故事一个完整且令人满意的结局，解决所有主要冲突。\n\n前面所有章节标题：\n{previous_chapters_titles}\n\n前一章({chapter_num-1})内容梗概：{prev_chapter_summary}"
                 else:
-                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的第{chapter_num}章，要求约{self.words_per_chapter}字。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n推进故事情节发展，保持读者兴趣。"
+                    # 收集前面所有章节的标题
+                    previous_chapters_titles = "\n".join([f"第{c['chapter_num']}章: {c['title']}" for c in self.novel_outline if c['chapter_num'] < chapter_num])
+                    
+                    # 获取前一章的梗概
+                    prev_chapter_summary = prev_chapter.get('summary', '') if prev_chapter else ''
+                    
+                    chapter_prompt = f"你是一位有20年以上经验的大师级网文小说作家。写小说的第{chapter_num}章，要求约{self.words_per_chapter}字，**严格要求生成内容不少于{self.words_per_chapter}字**。根据以下要求和章节大纲创作：\n小说整体要求：{self.user_prompt}\n章节标题：{chapter_title}\n章节内容梗概：{chapter_summary}\n\n推进故事情节发展，保持读者兴趣。\n\n前面所有章节标题：\n{previous_chapters_titles}\n\n前一章({chapter_num-1})内容梗概：{prev_chapter_summary}"
+                
+                # 在AI角色输出窗口显示提示词
+                self.progress.emit("系统", f"### 第{chapter_num}章提示词 ###\n{chapter_prompt}")
                 
                 # 第一阶段：AI作家与AI读者对抗生成，直到AI读者满意
                 self.progress.emit("系统", f"开始第{chapter_num}章内容生成（第一阶段：作家-读者对抗）")
@@ -398,6 +413,9 @@ class ChapterQueueWorker(QObject):
                     # 在AI角色输出窗口显示生成过程
                     self.progress.emit("作家", f"### 生成第{chapter_num}章中... ###")
                     if feedback is not None:
+                        # 在AI角色输出窗口显示带反馈的提示词
+                        writer_prompt_with_feedback = f"提示词：{chapter_prompt}\n\n反馈：{feedback}"
+                        self.progress.emit("作家", f"### 提示词（带反馈） ###\n{writer_prompt_with_feedback}")
                         content = self.ai_writer.generate_content(chapter_prompt, feedback=feedback)
                     else:
                         content = self.ai_writer.generate_content(chapter_prompt)
@@ -497,7 +515,6 @@ class ChapterQueueWorker(QObject):
                                 self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
                             # AI编辑不满意，需要AI作家根据编辑意见修改内容
                             self.progress.emit("作家", "### 根据编辑意见修改中... ###")
-                            edit_feedback = review
                             modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=edit_feedback)
                             self.progress.emit("作家", f"【第{chapter_num}章： {chapter_title}】\n【章节正文：\n{modified_content}】")
                             chapter_content = modified_content  # 更新内容供下一轮审核
@@ -577,6 +594,8 @@ class OutlineWorker(QObject):
     chapter_outline_generated = pyqtSignal(int, str, str)  # (chapter_num, chapter_title, chapter_summary)
     # 添加完整大纲生成信号
     outline_generated = pyqtSignal(str, int, str)  # (outline_content, expected_chapter_count, characters)
+    # 新增信号：角色信息更新
+    characters_updated = pyqtSignal()
 
     def __init__(self, ai_senior_writer1, ai_senior_writer2, start_chapter, chapter_count, user_prompt, novel_outline, selected_chapters, characters=None):
         super().__init__()
@@ -589,7 +608,6 @@ class OutlineWorker(QObject):
         self.selected_chapters = selected_chapters
         self.characters = characters
         self.running = True  # 用于控制线程是否继续运行
-        self.characters_updated = pyqtSignal()  # 新增信号：角色信息更新
     
     def _model_progress_callback(self, message):
         """
@@ -646,17 +664,24 @@ class OutlineWorker(QObject):
             
             # 收集前面章节的内容作为上下文，确保情节连贯性
             previous_chapters_context = ""
-            for i in range(1, chapter_num):
-                # 查找第i章的内容
-                chapter_info = None
+            if chapter_num == 1:
+                # 第一章不需要前面章节的内容
+                pass
+            else:
+                # 收集前面所有章节的标题
+                previous_chapters_titles = "\n".join([f"第{c['chapter_num']}章: {c['title']}" for c in self.novel_outline if c['chapter_num'] < chapter_num])
+                
+                # 对于第二章及以后的章节，使用前一章的标题和梗概以及所有前面章节的标题
+                prev_chapter_num = chapter_num - 1
+                prev_chapter_info = None
                 for chapter in self.novel_outline:
-                    if chapter['chapter_num'] == i:
-                        chapter_info = chapter
+                    if chapter['chapter_num'] == prev_chapter_num:
+                        prev_chapter_info = chapter
                         break
                 
                 # 如果找到了前一章的信息，则添加到上下文
-                if chapter_info and 'summary' in chapter_info and chapter_info['summary'].strip():
-                    previous_chapters_context += f"第{i}章 {chapter_info['title']}：{chapter_info['summary']}\n"
+                if prev_chapter_info and 'summary' in prev_chapter_info and prev_chapter_info['summary'].strip():
+                    previous_chapters_context = f"前面所有章节标题：\n{previous_chapters_titles}\n\n前一章内容：第{prev_chapter_num}章 {prev_chapter_info['title']}：{prev_chapter_info['summary']}"
             
             # 获取当前章节的标题和梗概（如果存在）
             current_chapter_info = None
@@ -668,18 +693,76 @@ class OutlineWorker(QObject):
             # 构造反馈信息（如果存在原章节内容）
             feedback = None
             if current_chapter_info and current_chapter_info.get('summary'):
-                feedback = f"原章节标题：{current_chapter_info['title']}\n原章节梗概：{current_chapter_info['summary']}\n请根据以上内容重新创作。"
+                # 保留原始章节信息用于提示词，但不直接传递给AI模型
+                original_content = f"原章节标题：{current_chapter_info['title']}\n原章节梗概：{current_chapter_info['summary']}"
             
             # 获取选中的角色信息（只在有选中角色时才传递）
             selected_characters = []
             if hasattr(self, 'characters') and self.characters:
                 # 检查是否有选中的角色（checkbox被选中）
                 for character in self.characters:
-                    if character.get('checkbox') and character['checkbox'].isChecked():
-                        selected_characters.append({
-                            'name': character['name'],
-                            'background': character['background']
-                        })
+                    # 安全检查：确保checkbox对象仍然有效
+                    checkbox = character.get('checkbox')
+                    if checkbox:
+                        try:
+                            if checkbox.isChecked():
+                                selected_characters.append({
+                                    'name': character['name'],
+                                    'background': character['background']
+                                })
+                        except RuntimeError as e:
+                            # 捕获"wrapped C/C++ object of type QCheckBox has been deleted"错误
+                            self.progress.emit("系统", f"警告：无法访问角色'{character['name']}'的复选框状态: {str(e)}")
+                            # 即使无法访问复选框状态，也添加角色信息（保守做法）
+                            selected_characters.append({
+                                'name': character['name'],
+                                'background': character['background']
+                            })
+            
+            # 构造提示词
+            professional_background = "你是一位有20年以上经验的网文小说资深作家，擅长创作各种类型的长篇小说，具有丰富的写作经验和深厚的文学功底。"
+            
+            # 构造角色信息字符串
+            character_info = ""
+            if selected_characters:
+                character_info = "\n\n要求在本章中包含以下角色的互动情节：\n"
+                for character in selected_characters:
+                    character_info += f"角色名称：{character['name']}，角色背景关系：{character['background']}\n"
+                character_info += "\n请在创作中安排这些角色与主角之间的互动，互动内容可以包括但不限于（战斗、聊天、谈情等）。"
+            
+            # 更严格的格式要求说明
+            format_requirements = """请严格按照以下格式输出，格式要求如下：
+1. 使用【】方括号包围各个部分
+2. 章节标题必须使用"第X章："格式开头
+3. 梗概内容部分必须以"【梗概内容： XXX】"格式输出
+4. 角色部分必须以"【本章出现角色："开头，每个角色使用"<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>"格式
+5. 角色说明必须包含角色能力、社会关系、与主角之间关系等描述内容
+6. 最后以"***其它说明或描述内容***"结尾，后面可以添加额外内容
+
+示例格式：
+【第1章： 初入仙途】
+【梗概内容： 主角林峰在一次意外中穿越到修仙界，发现自己拥有下品灵根。在天机AI的帮助下，他开始了自己的修仙之路。】
+【本章出现角色：
+<角色名称：林峰,角色说明(主角, 地球2050年意外穿越到修仙界的年轻人，拥有下品灵根，脑中有AI助手"天机", 通过结合现代科技与修真知识不断创新)>
+<角色名称：天机AI,角色说明(存储有2050年地球科技知识的人工智能, 主角的得力助手，帮助主角进行各种发明创造)>
+】
+***其它说明或描述内容***
+本章为小说开篇，主要介绍主角背景和世界观设定。
+"""
+            
+            if feedback:
+                if chapter_num == 1:
+                    prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{self.user_prompt}\n\n反馈意见：{feedback}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称"
+                else:
+                    prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{self.user_prompt}\n\n{previous_chapters_context}\n\n反馈意见：{feedback}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前一章的情节发展\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+            else:
+                if chapter_num == 1:
+                    prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{self.user_prompt}\n\n这是小说的开始章节{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称"
+                else:
+                    prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{self.user_prompt}\n\n{previous_chapters_context}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前一章的情节发展\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+            
+            # 在AI角色输出窗口显示提示词
+            self.progress.emit("系统", f"### 第{chapter_num}章重新生成提示词 ###\n{prompt}")
             
             # 生成单章大纲
             chapter_outline = self.ai_senior_writer1.generate_chapter_outline(
@@ -728,6 +811,21 @@ class OutlineWorker(QObject):
                 # 提取改进意见
                 improvement_suggestion = self._extract_improvement_suggestion(evaluation)
                 
+                # 只在重新生成章节时使用原始反馈信息（包含旧章节标题和梗概）用于提示词显示
+                prompt_feedback = None
+                if current_chapter_info and current_chapter_info.get('summary'):
+                    prompt_feedback = f"{original_content}\n请根据以下AI读者的反馈进行修改：\n{improvement_suggestion}"
+                else:
+                    prompt_feedback = improvement_suggestion
+                # 构造反馈信息（如果存在原章节内容）
+                feedback = improvement_suggestion
+                
+                # 构造反馈提示词
+                feedback_prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{self.user_prompt}\n\n前面章节内容：{previous_chapters_context}\n\n反馈意见：{improvement_suggestion}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+                
+                # 在AI角色输出窗口显示带反馈的提示词
+                self.progress.emit("系统", f"### 第{chapter_num}章重新生成提示词（带反馈）###\n{feedback_prompt}")
+                
                 # 重新生成单章大纲
                 chapter_outline = self.ai_senior_writer1.generate_chapter_outline(
                     chapter_num, 
@@ -753,12 +851,20 @@ class OutlineWorker(QObject):
                 
                 # 发送重新评估内容到输出窗口
                 self.progress.emit("作家2", re_evaluation)
+            # 如果评分达到9.0分或以上，则不需要重新生成，直接使用当前结果
             
             # 解析章节大纲
             title, summary, characters = self._parse_chapter_outline(chapter_outline)
             
+            # 构造角色信息字符串
+            characters_info = ""
+            if characters:
+                characters_info = "\n角色信息：\n"
+                for character in characters:
+                    characters_info += f"  {character['name']}: {character['background']}\n"
+            
             # 发送进度信息
-            self.progress.emit("系统", f"第{chapter_num}章:\n标题: {title}\n梗概: {summary}")
+            self.progress.emit("系统", f"第{chapter_num}章:\n标题: {title}\n梗概: {summary}{characters_info}")
             
             # 发射单章大纲生成信号
             self.chapter_outline_generated.emit(chapter_num, title, summary)
@@ -778,11 +884,39 @@ class OutlineWorker(QObject):
         if hasattr(self, 'characters') and self.characters:
             # 检查是否有选中的角色（checkbox被选中）
             for character in self.characters:
-                if character.get('checkbox') and character['checkbox'].isChecked():
-                    selected_characters.append({
-                        'name': character['name'],
-                        'background': character['background']
-                    })
+                # 安全检查：确保checkbox对象仍然有效
+                checkbox = character.get('checkbox')
+                if checkbox:
+                    try:
+                        if checkbox.isChecked():
+                            selected_characters.append({
+                                'name': character['name'],
+                                'background': character['background']
+                            })
+                    except RuntimeError as e:
+                        # 捕获"wrapped C/C++ object of type QCheckBox has been deleted"错误
+                        self.progress.emit("系统", f"警告：无法访问角色'{character['name']}'的复选框状态: {str(e)}")
+                        # 即使无法访问复选框状态，也添加角色信息（保守做法）
+                        selected_characters.append({
+                            'name': character['name'],
+                            'background': character['background']
+                        })
+        
+        # 构造提示词
+        professional_background = "你是一位有20年以上经验的网文小说资深作家，擅长创作各种类型的长篇小说，具有丰富的写作经验和深厚的文学功底。"
+        
+        # 构造角色信息字符串
+        character_info = ""
+        if selected_characters:
+            character_info = "\n\n要求在大纲中包含以下角色的互动情节：\n"
+            for character in selected_characters:
+                character_info += f"角色名称：{character['name']}，角色背景关系：{character['background']}\n"
+            character_info += "\n请在创作中安排这些角色与主角之间的互动，互动内容可以包括但不限于（战斗、聊天、谈情等）。"
+        
+        prompt = f"{professional_background}\n请为小说创作一个包含{self.chapter_count}章的大纲，从第{self.start_chapter}章开始。\n\n小说整体要求：{self.user_prompt}{character_info}\n\n每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明：XXX(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+        
+        # 在AI角色输出窗口显示提示词
+        self.progress.emit("系统", f"### 大纲生成提示词 ###\n{prompt}")
         
         # 生成完整大纲
         full_outline = self.ai_senior_writer1.generate_outline(
@@ -826,7 +960,13 @@ class OutlineWorker(QObject):
             # 提取改进意见
             improvement_suggestion = self._extract_improvement_suggestion(evaluation)
             
-            # 重新生成大纲
+            # 构造反馈提示词
+            feedback_prompt = f"{professional_background}\n根据另一位资深作家的反馈修改小说大纲。\n\n小说整体要求：{self.user_prompt}\n\n反馈意见：{improvement_suggestion}{character_info}\n\n请提供一个包含{self.chapter_count}章的小说大纲，从第{self.start_chapter}章开始。每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明：XXX(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+            
+            # 在AI角色输出窗口显示带反馈的提示词
+            self.progress.emit("系统", f"### 大纲重新生成提示词（带反馈）###\n{feedback_prompt}")
+            
+            # 重新生成大纲，只传递AI读者的评价内容作为反馈
             full_outline = self.ai_senior_writer1.generate_outline(
                 self.start_chapter, 
                 self.chapter_count, 
@@ -860,6 +1000,9 @@ class OutlineWorker(QObject):
         # 将角色信息保存到角色文件中
         self._extract_and_save_characters(full_outline)
         
+        # 发射角色更新信号
+        self.characters_updated.emit()
+    
     def _extract_all_characters(self, outline_text):
         """
         从大纲中提取所有角色信息
@@ -884,11 +1027,23 @@ class OutlineWorker(QObject):
                     'background': background.strip()
                 })
             
-            # 如果没有匹配到新格式，尝试匹配旧格式
+            # 如果没有匹配到新格式，尝试匹配使用英文逗号的格式
             if not character_matches:
                 # 匹配每个角色 <角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>
                 # 使用英文逗号的格式
                 character_pattern = r'<角色名称：(.*?)，角色说明\(包括角色能力，社会关系，与主角之间关系等等描述内容\)：(.*?)>'
+                character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
+                for name, background in character_matches:
+                    all_characters.append({
+                        'name': name.strip(),
+                        'background': background.strip()
+                    })
+            
+            # 如果仍没有匹配到，尝试匹配新格式（用户提供的格式）
+            if not character_matches:
+                # 匹配新格式 <角色名称：林峰, 角色说明(主角, 地球2050年意外穿越到修仙界的年轻人，拥有下品灵根，脑中有AI助手"天机", 通过结合现代科技与修真知识不断创新)>
+                # 支持逗号分隔或无分隔符的格式
+                character_pattern = r'<角色名称：([^<>\n]*?)\s*,*\s*角色说明\(([^<>\n]*)\)>'
                 character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
                 for name, background in character_matches:
                     all_characters.append({
@@ -959,11 +1114,11 @@ class OutlineWorker(QObject):
         """
         import re
         
-        # 提取标题
-        title_match = re.search(r'【第\d+章：\s*(.*?)】', outline_text)
+        # 提取标题（保留"第XX章"标识）
+        title_match = re.search(r'【(第\d+章[：:]?\s*.*?)】', outline_text)
         if not title_match:
             # 兼容旧格式
-            title_match = re.search(r'【第\d+章\s+(.*?)】', outline_text)
+            title_match = re.search(r'【(第\d+章\s*.*?)】', outline_text)
         title = title_match.group(1) if title_match else "待定章节"
         
         # 提取梗概 - 优先匹配"梗概内容：XXX"格式
@@ -1012,12 +1167,12 @@ class OutlineWorker(QObject):
             characters_text = characters_match.group(1)
             # 匹配每个角色 <角色名称：xxx，角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>
             # 优先匹配作家1使用的中文顿号"，"格式
-            character_pattern = r'<角色名称：(.*?)，角色说明$包括角色能力，社会关系，与主角之间关系等等描述内容$：(.*?)>'
+            character_pattern = r'<角色名称：(.*?)，角色说明\(包括角色能力，社会关系，与主角之间关系等等描述内容\)：(.*?)>'
             character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
             
             # 如果没有找到匹配，尝试匹配使用英文逗号","的格式
             if not character_matches:
-                character_pattern = r'<角色名称：(.*?),角色说明$包括角色能力，社会关系，与主角之间关系等等描述内容$：(.*?)>'
+                character_pattern = r'<角色名称：(.*?),角色说明\(包括角色能力，社会关系，与主角之间关系等等描述内容\)：(.*?)>'
                 character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
             
             # 如果仍然没有找到匹配，尝试更宽松的匹配方式
@@ -1032,6 +1187,18 @@ class OutlineWorker(QObject):
                     'name': name.strip(),
                     'background': background.strip()
                 })
+            
+            # 如果仍没有匹配到，尝试匹配新格式（用户提供的格式）
+            if not character_matches:
+                # 匹配新格式 <角色名称：林峰, 角色说明(主角, 地球2050年意外穿越到修仙界的年轻人，拥有下品灵根，脑中有AI助手"天机", 通过结合现代科技与修真知识不断创新)>
+                # 支持逗号分隔或无分隔符的格式
+                character_pattern = r'<角色名称：([^<>\n]*?)\s*,*\s*角色说明\(([^<>\n]*)\)>'
+                character_matches = re.findall(character_pattern, characters_text, re.DOTALL)
+                for name, background in character_matches:
+                    characters.append({
+                        'name': name.strip(),
+                        'background': background.strip()
+                    })
             
             # 如果仍没有匹配到，尝试匹配旧格式
             if not character_matches:
@@ -1162,6 +1329,7 @@ class OutlineWorker(QObject):
                     with open("角色.json", "w", encoding="utf-8") as f:
                         json.dump(existing_characters, f, ensure_ascii=False, indent=4)
                     self.progress.emit("系统", f"已从大纲中提取并保存 {new_characters_added} 个新角色到角色列表中")
+                    self.characters_updated.emit()  # 发射角色更新信号
                 except Exception as e:
                     self.progress.emit("系统", f"保存角色信息时出错: {str(e)}")
 

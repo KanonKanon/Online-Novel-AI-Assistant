@@ -2,20 +2,17 @@ import sys
 import json
 import os
 import threading
+import time
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QGroupBox, QListWidget, QPushButton, QTextEdit, QLineEdit, 
                              QLabel, QComboBox, QMessageBox, QCheckBox, QDialog, 
                              QDialogButtonBox, QListWidgetItem, QProgressBar, QFileDialog,
                              QDesktopWidget, QAction, QAbstractItemView)
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot, QMetaObject
+from PyQt5.QtCore import Qt, QTimer, pyqtSlot, QMetaObject, QThread, pyqtSignal
 from PyQt5.QtGui import QTextCursor
-
 
 # 导入AI类
 from ai_roles import AIWriter, AIReader, AIEditor, AISeniorWriter, GlobalModelManager
-
-# 添加导入语句
-from PyQt5.QtCore import QThread  # 导入QThread类
 
 # 导入工作线程类
 from workers import OutlineWorker, ChapterQueueWorker, Worker
@@ -30,12 +27,17 @@ from dialogs import NovelSettingsDialog, SettingsDialog, LocalSettingsDialog
 # 导入设置加载模块
 from path.to.settings_loader import load_settings
 
-
-
-
 class MainWindow(QMainWindow):
+    # 添加一个信号用于更新UI
+    worldview_generated = pyqtSignal(str)
+    
     def __init__(self):
         super().__init__()
+        self.initUI()
+        # 连接信号到槽
+        self.worldview_generated.connect(self.update_ui_from_signal)
+        
+    def initUI(self):
         self.setWindowTitle("网文小说AI助手")
         self.setGeometry(100, 100, 1400, 900)
         
@@ -173,6 +175,9 @@ class MainWindow(QMainWindow):
         self.generate_chapter_btn.clicked.connect(self.start_chapter_generation)
         self.novel_settings_btn = QPushButton("小说设置")
         self.novel_settings_btn.clicked.connect(self.show_novel_settings)
+        # 添加生成世界观按钮
+        self.generate_worldview_btn = QPushButton("生成世界观")
+        self.generate_worldview_btn.clicked.connect(self.generate_worldview)
         # 添加中断生成按钮
         self.stop_generation_btn = QPushButton("中断生成")
         self.stop_generation_btn.clicked.connect(self.stop_chapter_generation)
@@ -180,6 +185,7 @@ class MainWindow(QMainWindow):
         
         bottom_button_layout.addWidget(self.generate_chapter_btn)
         bottom_button_layout.addWidget(self.novel_settings_btn)
+        bottom_button_layout.addWidget(self.generate_worldview_btn)
         bottom_button_layout.addWidget(self.stop_generation_btn)
         bottom_button_layout.addStretch()
         
@@ -576,138 +582,797 @@ class MainWindow(QMainWindow):
                 self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
             self.log_message("退出invoke_show_success方法", "debug")
     
-        def start_thread():
-            self.log_message("启动工作线程...", "debug")
-            thread = threading.Thread(target=generate_in_thread)
-            self.log_message("线程对象已创建", "debug")
-            thread.daemon = True  # 设置为守护线程
-            self.log_message("设置为守护线程", "debug")
-            thread.start()
-            self.log_message("工作线程已启动")
-            # 添加线程状态检查
-            def check_thread():
-                self.log_message("检查工作线程状态...", "debug")
-                if thread.is_alive():
-                    self.log_message("工作线程仍在运行...", "debug")
-                    # 继续检查直到线程结束
-                    QTimer.singleShot(5000, check_thread)
-                else:
-                    self.log_message("工作线程已结束", "debug")
-            # 5秒后检查线程状态
-            QTimer.singleShot(5000, check_thread)
-    
-        start_thread()
-        self.log_message("<<< 退出generate_character_with_ai方法", "debug")
-
-    
-    def after_character_generation(self, ai_response, name_edit, background_edit):
-        """AI生成角色后的处理"""
-        # 解析AI响应
-        
-        # 解析AI响应
-        characters = self.parse_ai_character_response(ai_response)
-        self.log_message(f"解析到 {len(characters)} 个角色", "debug")
-        
-        # 输出解析到的角色信息
-        for i, character in enumerate(characters):
-            self.log_message(f"角色{i+1}: 名称='{character.get('name', 'N/A')}', 背景='{character.get('background', 'N/A')}'", "debug")
-        
-        # 如果没有解析到角色，显示错误信息
-        if not characters:
-            error_msg = "未能从AI响应中解析到角色信息"
-            self.log_message(error_msg, "error")
-            
-            def show_warning():
-                QMessageBox.warning(self, "警告", f"{error_msg}，请查看AI角色输出窗口中的详细信息")
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, show_warning)
+    def generate_worldview(self):
+        """使用AI生成世界观"""
+        # 获取用户输入的小说内容要求
+        user_prompt = self.user_input.toPlainText().strip()
+        if not user_prompt:
+            QMessageBox.warning(self, "警告", "请先输入小说内容要求！")
             return
         
-        # 创建选择对话框
-        def create_dialog():
-            dialog = QDialog(self)
-            dialog.setWindowTitle("选择角色")
-            dialog.resize(500, 400)
-            
-            # 将对话框居中显示
-            desktop = QApplication.desktop()
-            screen_center = desktop.screenGeometry().center()
-            main_window_center = self.geometry().center()
-            center_point = main_window_center if main_window_center.x() > 0 and main_window_center.y() > 0 else screen_center
-            x = center_point.x() - dialog.width() // 2
-            y = center_point.y() - dialog.height() // 2
-            dialog.move(max(0, x), max(0, y))
-            
-            layout = QVBoxLayout(dialog)
-            
-            # 添加说明
-            label = QLabel("AI生成了以下角色，请选择一个：")
-            layout.addWidget(label)
-            
-            # 创建列表显示角色
-            character_list = QListWidget()
-            character_list.setWordWrap(True)
-            character_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            layout.addWidget(character_list)
-            
-            # 添加角色到列表
-            added_count = 0
-            for i, character in enumerate(characters):
-                if not isinstance(character, dict):
-                    continue
-                
-                if 'name' not in character or 'background' not in character:
-                    continue
-                
-                # 去除角色名称中的方括号
-                name = character['name'].strip("[]【】")
-                item_text = f"{name}\n{character['background']}"
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.UserRole, character)
-                character_list.addItem(item)
-                added_count += 1
-                
-            # 添加按钮
-            button_layout = QHBoxLayout()
-            select_button = QPushButton("选择")
-            cancel_button = QPushButton("取消")
-            button_layout.addWidget(select_button)
-            button_layout.addWidget(cancel_button)
-            layout.addLayout(button_layout)
-            
-            # 连接按钮事件
-            def select_character():
-                selected_items = character_list.selectedItems()
-                if selected_items:
-                    character = selected_items[0].data(Qt.UserRole)
-                    # 使用信号发射机制更新父对话框中的控件，避免直接访问可能已销毁的对象
-                    dialog.character_selected = character
-                    dialog.accept()
-                else:
-                    QMessageBox.warning(dialog, "警告", "请先选择一个角色！")
-            
-            def cancel_selection():
-                dialog.reject()
-            
-            select_button.clicked.connect(select_character)
-            cancel_button.clicked.connect(cancel_selection)
-            
-            # 显示对话框并处理结果
-            if dialog.exec_() == QDialog.Accepted:
-                # 检查是否有选中的角色
-                if hasattr(dialog, 'character_selected'):
-                    character = dialog.character_selected
-                    # 在主线程中更新控件
-                    def update_parent_dialog():
-                        name_edit.setText(character['name'])
-                        background_edit.setPlainText(character['background'])
-                    QTimer.singleShot(0, update_parent_dialog)
+        # 显示生成进度信息到AI角色输出窗口
+        self.role_output.append("[系统] 开始生成世界观...")
         
-        # 在主线程中创建并显示对话框
+        # 构造提示词
+        prompt = f"""你是一位专业的小说世界观构建师，擅长创造各种类型的奇幻世界。请根据以下小说内容要求，构建一个完整的世界观设定：
+
+小说内容要求：{user_prompt}
+
+请提供以下内容的详细描述：
+1. 世界名称和基本描述
+2. 世界的地理分布描述
+3. 世界的势力分布描述
+4. 世界的修炼体系或能力体系描述
+
+要求总字数不少于800字。请严格按照以下格式输出：
+世界观设定
+世界名称
+[世界名称和基本描述]
+地理分布
+[世界的地理分布描述]
+势力分布
+[世界的势力分布描述]
+修炼体系
+[世界的修炼体系或能力体系描述]
+"""
+        
+        # 在AI角色输出窗口显示提示词
+        self.role_output.append(f"### 世界观生成提示词 ###\n{prompt}")
+        
+        # 在新线程中生成内容，避免阻塞UI
+        def generate_in_thread():
+            try:
+                # 使用AI作家生成世界观
+                worldview_content = self.ai_writer.generate_worldview(prompt)
+                
+                # 使用信号在主线程中执行UI更新
+                self.worldview_generated.emit(worldview_content)
+                
+            except Exception as e:
+                # 在主线程中显示错误
+                def show_error():
+                    error_msg = f"生成世界观时发生异常：{str(e)}"
+                    self.role_output.append(f"[系统] {error_msg}")
+                    QMessageBox.critical(self, "错误", error_msg)
+                QTimer.singleShot(0, show_error)
+        
+        # 启动线程执行生成任务
+        thread = threading.Thread(target=generate_in_thread)
+        thread.daemon = True
+        thread.start()
+
+        self.role_output.append("[系统] 已启动世界观生成线程，请稍候...")
+
+
+# 导入工作线程类
+from workers import OutlineWorker, ChapterQueueWorker, Worker
+
+# 导入工具函数
+from utils import (extract_chapters_from_outline, clean_content, load_novel_outline, 
+                   save_novel_outline, create_chapter_item, parse_ai_response, parse_ai_character_response)
+
+# 导入对话框类
+from dialogs import NovelSettingsDialog, SettingsDialog, LocalSettingsDialog
+
+# 导入设置加载模块
+from path.to.settings_loader import load_settings
+
+class MainWindow(QMainWindow):
+    # 添加一个信号用于更新UI
+    worldview_generated = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+        # 连接信号到槽
+        self.worldview_generated.connect(self.update_ui_from_signal)
+        
+    def initUI(self):
+        self.setWindowTitle("网文小说AI助手")
+        self.setGeometry(100, 100, 1400, 900)
+        
+        # 创建菜单栏
+        menubar = self.menuBar()
+        
+        # 创建"设置"菜单
+        settings_menu = menubar.addMenu('设置')
+        
+        # 添加"参数设置"菜单项
+        settings_action = QAction('参数设置', self)
+        settings_action.triggered.connect(self.show_settings)
+        settings_menu.addAction(settings_action)
+        
+        # 添加"本地设置"菜单项
+        local_settings_action = QAction('本地设置', self)
+        local_settings_action.triggered.connect(self.show_local_settings)
+        settings_menu.addAction(local_settings_action)
+        
+        # 创建"文件"菜单
+        file_menu = menubar.addMenu('文件')
+        
+        # 添加"导出小说"菜单项
+        export_action = QAction('导出小说', self)
+        export_action.triggered.connect(self.export_novel)
+        file_menu.addAction(export_action)
+        
+        # 创建中央部件和主布局（上下结构）
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        
+        # 上部分：选择小说类型
+        type_layout = QHBoxLayout()
+        type_label = QLabel("小说类型:")
+        self.novel_type = QComboBox()
+        self.novel_type.addItems(["玄幻", "仙侠", "都市", "言情", "历史", "科幻", "游戏", "悬疑", "其它"])
+        
+        # 清空小说内容要求按钮
+        self.clear_btn = QPushButton("清空小说内容要求")
+        self.clear_btn.clicked.connect(self.clear_all)
+        
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.novel_type)
+        type_layout.addWidget(self.clear_btn)
+        type_layout.addStretch()
+        
+        main_layout.addLayout(type_layout)
+        
+        # 下部分：左中右结构
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+        
+        # 左边：上下结构（小说大纲）
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        
+        # 上部分：大纲列表
+        outline_group = QGroupBox("小说大纲")
+        outline_layout = QVBoxLayout(outline_group)
+        
+        # 创建全选复选框
+        self.select_all_checkbox = QCheckBox("全选")
+        self.select_all_checkbox.stateChanged.connect(self.toggle_select_all)
+        outline_layout.addWidget(self.select_all_checkbox)
+        
+        # 创建大纲列表
+        self.outline_list = QListWidget()
+        self.outline_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.outline_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.outline_list.setWordWrap(True)
+        # 连接大纲列表项点击信号
+        self.outline_list.itemClicked.connect(self.on_outline_item_clicked)
+        outline_layout.addWidget(self.outline_list)
+        
+        left_layout.addWidget(outline_group)
+        
+        # 下部分：【生成大纲】【保存】按钮
+        button_layout = QHBoxLayout()
+        self.generate_btn = QPushButton("生成大纲")
+        self.generate_btn.clicked.connect(self.generate_outline)
+        self.save_btn = QPushButton("保存")
+        self.save_btn.clicked.connect(self.save_novel_outline)
+        # 添加中断生成按钮
+        self.stop_outline_btn = QPushButton("中断生成")
+        self.stop_outline_btn.clicked.connect(self.stop_outline_generation)
+        self.stop_outline_btn.setEnabled(False)  # 默认禁用
+        
+        button_layout.addWidget(self.generate_btn)
+        button_layout.addWidget(self.save_btn)
+        button_layout.addWidget(self.stop_outline_btn)
+        button_layout.addStretch()
+        
+        left_layout.addLayout(button_layout)
+        
+        # 中间：上中下结构
+        middle_widget = QWidget()
+        middle_layout = QVBoxLayout(middle_widget)
+        
+        # 上部分：小说内容要求
+        input_group = QGroupBox("小说内容要求")
+        input_layout = QVBoxLayout(input_group)
+        
+        self.user_input = QTextEdit()
+        self.user_input.setPlaceholderText("请输入小说内容要求...")
+        self.user_input.setMinimumHeight(100)  # 保持最小高度为100像素
+        # 移除最大高度限制，让其根据父元素高度自动调整
+        input_layout.addWidget(self.user_input)
+        
+        middle_layout.addWidget(input_group)
+        
+        # 中部分：AI角色输出窗口
+        role_output_group = QGroupBox("AI角色输出窗口")
+        role_output_layout = QVBoxLayout(role_output_group)
+        self.role_output = QTextEdit()
+        self.role_output.setReadOnly(True)
+        role_output_layout.addWidget(self.role_output)
+        middle_layout.addWidget(role_output_group)
+        
+        # 下部分：小说最终结果列表
+        result_group = QGroupBox("小说最终结果窗口")
+        result_layout = QVBoxLayout(result_group)
+        self.final_result = QListWidget()
+        self.final_result.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.final_result.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.final_result.setWordWrap(True)
+        # 连接最终结果列表项点击信号
+        self.final_result.itemClicked.connect(self.on_final_result_item_clicked)
+        result_layout.addWidget(self.final_result)
+        middle_layout.addWidget(result_group)
+        
+        # 添加按钮到中间底部
+        bottom_button_layout = QHBoxLayout()
+        self.generate_chapter_btn = QPushButton("开始生成")
+        self.generate_chapter_btn.clicked.connect(self.start_chapter_generation)
+        self.novel_settings_btn = QPushButton("小说设置")
+        self.novel_settings_btn.clicked.connect(self.show_novel_settings)
+        # 添加生成世界观按钮
+        self.generate_worldview_btn = QPushButton("生成世界观")
+        self.generate_worldview_btn.clicked.connect(self.generate_worldview)
+        # 添加中断生成按钮
+        self.stop_generation_btn = QPushButton("中断生成")
+        self.stop_generation_btn.clicked.connect(self.stop_chapter_generation)
+        self.stop_generation_btn.setEnabled(False)  # 默认禁用
+        
+        bottom_button_layout.addWidget(self.generate_chapter_btn)
+        bottom_button_layout.addWidget(self.novel_settings_btn)
+        bottom_button_layout.addWidget(self.generate_worldview_btn)
+        bottom_button_layout.addWidget(self.stop_generation_btn)
+        bottom_button_layout.addStretch()
+        
+        middle_layout.addLayout(bottom_button_layout)
+        
+        # 右边：角色列表
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        
+        # 添加角色列表
+        character_group = QGroupBox("角色列表")
+        character_layout = QVBoxLayout(character_group)
+        
+        # 创建角色列表
+        self.character_list = QListWidget()
+        self.character_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.character_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 禁用横向滚动条
+        self.character_list.setWordWrap(True)  # 启用自动换行
+        self.character_list.setSelectionMode(QAbstractItemView.MultiSelection)  # 启用多选模式
+        character_layout.addWidget(self.character_list)
+        
+        # 添加角色操作按钮
+        character_button_layout = QHBoxLayout()
+        self.save_character_btn = QPushButton("保存角色")
+        self.save_character_btn.clicked.connect(self.save_characters)
+        self.add_character_btn = QPushButton("添加角色")
+        self.add_character_btn.clicked.connect(self.add_character)
+        self.delete_character_btn = QPushButton("删除角色")
+        self.delete_character_btn.clicked.connect(self.delete_selected_character)
+        character_button_layout.addWidget(self.save_character_btn)
+        character_button_layout.addWidget(self.add_character_btn)
+        character_button_layout.addWidget(self.delete_character_btn)
+        character_button_layout.addStretch()
+        character_layout.addLayout(character_button_layout)
+        
+        right_layout.addWidget(character_group)
+        
+        # 将左中右部分添加到底部布局
+        bottom_layout.addWidget(left_widget, 1)
+        bottom_layout.addWidget(middle_widget, 2)
+        bottom_layout.addWidget(right_widget, 1)
+        
+        main_layout.addWidget(bottom_widget)
+        
+        # 初始化AI实例和数据结构
+        self.init_ai_instances()
+        self.init_data_structures()
+        
+        # Load saved settings
+        self.load_settings()
+        # 加载小说大纲和已生成内容
+        self.load_novel_outline()
+        
+        # 加载角色信息
+        self.load_characters()
+
+    def init_ai_instances(self):
+        """Initialize AI instances"""
+        # 读取配置
+        settings = load_settings()
+        
+        # 获取API密钥和模型配置
+        api_key = settings.get('api_keys', {}).get('qwen', '')
+        novel_outline_model = settings.get('models', {}).get('novel_outline', 'qwen-plus')
+        chapter_outline_model = settings.get('models', {}).get('chapter_outline', 'qwen-plus')
+        character_model = settings.get('models', {}).get('character', 'qwen-plus')
+        
+        # 获取本地模型配置
+        use_local = settings.get('local_settings', {}).get('use_local', False)
+        local_model_path = settings.get('local_settings', {}).get('local_model_path', '')
+        
+        # 创建AI实例
+        self.ai_writer = AIWriter(api_key=api_key, model=character_model)
+        self.ai_reader = AIReader(api_key=api_key, model=chapter_outline_model)
+        self.ai_editor = AIEditor(api_key=api_key, model=chapter_outline_model)
+        self.ai_senior_writer1 = AISeniorWriter(api_key=api_key, model=novel_outline_model,
+                                               use_local=use_local, local_model_path=local_model_path)
+        self.ai_senior_writer2 = AISeniorWriter(api_key=api_key, model=novel_outline_model,
+                                               use_local=use_local, local_model_path=local_model_path)
+        
+        # 设置AISeniorWriter的主窗口引用
+        self.ai_senior_writer1.set_main_window(self)
+        self.ai_senior_writer2.set_main_window(self)
+    
+    def delete_selected_character(self):
+        """删除选中的角色"""
+        self.log_message("开始执行删除角色操作", "debug")
+        try:
+            # 获取当前选中的角色 - 使用另一种方法检测选中项
+            selected_names = []
+            
+            # 遍历所有角色项，检查复选框状态
+            for i in range(self.character_list.count()):
+                item = self.character_list.item(i)
+                widget = self.character_list.itemWidget(item)
+                if widget:
+                    # 获取复选框组件（第一个子组件）
+                    checkbox = widget.layout().itemAt(0).widget()
+                    if checkbox and checkbox.isChecked():
+                        # 获取name_edit组件（右侧widget中的第一个子组件）
+                        right_widget = widget.layout().itemAt(1).widget()
+                        if right_widget and right_widget.layout().count() > 0:
+                            name_edit = right_widget.layout().itemAt(0).widget()
+                            if name_edit:
+                                selected_names.append(name_edit.text())
+            
+            self.log_message(f"选中了 {len(selected_names)} 个角色", "debug")
+            
+            if not selected_names:
+                self.log_message("没有选中的角色", "debug")
+                return
+
+            # 读取角色.json文件中的现有数据
+            try:
+                with open("角色.json", "r", encoding="utf-8") as f:
+                    characters_data = json.load(f)
+            except FileNotFoundError:
+                characters_data = []
+            except json.JSONDecodeError:
+                QMessageBox.critical(self, "错误", "角色文件格式错误，无法读取数据")
+                return
+            
+            # 从角色数据中过滤掉选中的角色
+            filtered_characters = [
+                char for char in characters_data 
+                if char.get('name') not in selected_names
+            ]
+            
+            # 将更新后的数据写回文件
+            with open("角色.json", "w", encoding="utf-8") as f:
+                json.dump(filtered_characters, f, ensure_ascii=False, indent=4)
+            
+            # 重新加载角色列表
+            self.load_characters()
+            
+            # 显示成功消息
+            success_msg = f"成功删除 {len(selected_names)} 个角色"
+            self.role_output.append(f"[系统] {success_msg}")
+            QMessageBox.information(self, "成功", success_msg)
+            
+        except Exception as e:
+            error_msg = f"删除角色失败：{str(e)}"
+            self.log_message(error_msg, "error")
+            self.role_output.append(f"[系统] {error_msg}")
+            QMessageBox.critical(self, "错误", error_msg)
+
+    def save_characters(self):
+        """保存角色到文件"""
+        try:
+            # 准备保存的数据
+            characters_data = []
+            for character in self.characters:
+                characters_data.append({
+                    'name': character['name'],
+                    'background': character['background']
+                })
+            
+            # 保存到文件
+            with open("角色.json", "w", encoding="utf-8") as f:
+                json.dump(characters_data, f, ensure_ascii=False, indent=4)
+            
+            self.role_output.append("[系统] 角色信息已保存到 角色.json 文件！")
+        except Exception as e:
+            error_msg = f"保存角色信息失败：{str(e)}"
+            self.role_output.append(f"[系统] {error_msg}")
+            QMessageBox.critical(self, "错误", error_msg)
+
+    def init_data_structures(self):
+        """Initialize data structures"""
+        self.novel_outline = []  # 存储大纲信息 [{chapter_num, title, summary, item_widget}]
+        self.chapter_items_map = {}  # 映射章节号到最终结果列表中的项
+        self.characters = []  # 存储角色信息 [{name, background, item_widget}]
+        
+    def initialize_ai_instances(self):
+        """Initialize AI writer, reader and editor instances"""
+        self.ai_writer = AIWriter()
+        self.ai_reader = AIReader()
+        self.ai_editor = AIEditor()
+        
+    def create_character_item(self, name, background):
+        """创建角色列表项"""
+        item_widget = QWidget()
+        item_layout = QHBoxLayout(item_widget)  # 改为水平布局
+        item_layout.setContentsMargins(5, 5, 5, 5)
+        item_layout.setSpacing(5)
+        
+        # 左侧：复选框
+        checkbox = QCheckBox()
+        
+        # 右侧：上下结构
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(2)
+        
+        # 上部分：角色名称（可编辑）
+        name_edit = QLineEdit(name)
+        name_edit.setPlaceholderText("角色名称")
+        
+        # 下部分：角色说明（可编辑）- 包含个人能力，社会关系等
+        background_edit = QTextEdit()
+        background_edit.setPlaceholderText("角色说明（包含个人能力，社会关系等）")
+        background_edit.setMaximumHeight(80)
+        background_edit.setPlainText(background)
+        
+        right_layout.addWidget(name_edit)
+        right_layout.addWidget(background_edit)
+        
+        # 连接信号，当内容改变时更新数据
+        def on_name_changed(text):
+            for character in self.characters:
+                if character['item_widget'] == item_widget:
+                    character['name'] = text
+                    break
+        
+        def on_background_changed():
+            for character in self.characters:
+                if character['item_widget'] == item_widget:
+                    character['background'] = background_edit.toPlainText()
+                    break
+        
+        name_edit.textChanged.connect(on_name_changed)
+        background_edit.textChanged.connect(on_background_changed)
+        
+        # 添加到水平布局
+        item_layout.addWidget(checkbox)
+        item_layout.addWidget(right_widget, 1)  # 添加伸展因子，使右侧组件填充剩余空间
+        
+        # 创建列表项并设置自定义widget
+        item = QListWidgetItem()
+        item.setSizeHint(item_widget.sizeHint())
+        self.character_list.addItem(item)
+        self.character_list.setItemWidget(item, item_widget)
+        
+        return {
+            'name': name,
+            'background': background,
+            'checkbox': checkbox,
+            'item_widget': item_widget,
+            'name_edit': name_edit,
+            'background_edit': background_edit,
+            'list_item': item
+        }
+
+    def add_character(self):
+        """添加新角色"""
+        self.log_message("开始添加新角色", "info")
+        # 创建添加角色对话框
+        dialog = QDialog(self)
+        dialog.setWindowTitle("添加角色")
+        dialog.setGeometry(0, 0, 400, 250)  # 设置窗口大小，位置暂时设置为(0,0)
+        
+        # 将对话框居中显示在主窗口中央
+        dialog.move(
+            self.geometry().center().x() - dialog.width() // 2,
+            self.geometry().center().y() - dialog.height() // 2
+        )
+    
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(5)  # 设置组件之间垂直间距为5px
+        layout.setContentsMargins(10, 10, 10, 10)  # 设置边距
+
+        # 角色名称输入
+        name_label = QLabel("角色名称:")
+        layout.addWidget(name_label)
+        name_edit = QLineEdit()
+        layout.addWidget(name_edit)
+
+        # 角色说明输入（包含个人能力，社会关系等）
+        background_label = QLabel("角色说明（包含个人能力，社会关系等）:")
+        layout.addWidget(background_label)
+        background_edit = QTextEdit()
+        background_edit.setMaximumHeight(80)  # 减小高度以进一步压缩空间
+        layout.addWidget(background_edit)
+
+        # AI生成按钮
+        ai_generate_button = QPushButton("AI生成")
+        ai_generate_button.clicked.connect(lambda: self.generate_character_with_ai(name_edit, background_edit))
+        layout.addWidget(ai_generate_button)
+
+        # 按钮
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # 设置布局伸展因子，确保所有组件靠上排列
+        layout.addStretch(1)
+
+        if dialog.exec_() == QDialog.Accepted:
+            name = name_edit.text().strip()
+            background = background_edit.toPlainText().strip()
+
+            if name:
+                self.log_message(f"创建角色: {name}", "debug")
+                character = self.create_character_item(name, background)
+                self.characters.append(character)
+                self.log_message(f"角色 {name} 添加成功", "info")
+            else:
+                self.log_message("角色添加失败: 名称为空", "warning")
+                QMessageBox.warning(self, "警告", "角色名称不能为空！")
+    
+    def generate_character_with_ai(self, name_edit, background_edit):
+        """使用AI生成角色信息"""
+        self.log_message(">>> 进入generate_character_with_ai方法", "debug")
         from PyQt5.QtCore import QTimer
-        self.log_message("准备安排create_dialog任务", "debug")
-        QTimer.singleShot(0, create_dialog)
-        self.log_message("已安排create_dialog任务", "debug")
+        
+        # 获取用户输入的小说主题
+        novel_theme = self.user_input.toPlainText().strip()
+        self.log_message(f"检查用户输入的小说主题，长度: {len(novel_theme)} 字符", "debug")
+        if not novel_theme:
+            self.log_message("小说主题为空，准备显示警告", "debug")
+            def show_warning():
+                self.log_message("警告：请先输入小说主题内容！", "warning")
+                QMessageBox.warning(self, "警告", "请先输入小说主题内容！")
+            QTimer.singleShot(0, show_warning)
+            self.log_message("<<< 因小说主题为空退出generate_character_with_ai方法", "debug")
+            return
+        
+        self.log_message("小说主题检查通过", "debug")
+        # 显示生成进度信息到AI角色输出窗口
+        self.log_message("开始AI角色生成...")
+        
+        # 在新线程中生成内容
+        def generate_in_thread():
+            self.log_message("开始在工作线程中生成角色...", "debug")
+            self.log_message(f"小说主题长度: {len(novel_theme)} 字符", "debug")
+            try:
+                # 使用ai_senior_writer1.generate_character_design替代ai_writer.generate_content
+                self.log_message("调用AI生成角色设计...", "debug")
+                ai_response = self.ai_senior_writer1.generate_character_design(novel_theme)
+                self.log_message("<<< 退出generate_in_thread函数", "debug")
+                self.log_message(f"工作线程中AI响应完成，长度: {len(ai_response) if ai_response else 0} 字符", "debug")
+                self.log_message(f"AI响应前100字符: {ai_response[:100] if ai_response else 'None'}", "debug")
+                self.log_message("准备处理AI响应结果...", "debug")
+                
+                # 检查AI响应是否为空或包含错误
+                if not ai_response:
+                    self.log_message("检查AI响应: 空响应", "debug")
+                    error_msg = "AI生成角色失败：空响应"
+                    self.log_message(error_msg, "error")
+                    # 在主线程中显示错误
+                    def show_error():
+                        self.log_message("准备显示空响应错误对话框", "debug")
+                        QMessageBox.critical(self, "错误", "AI生成角色失败：空响应")
+                    QTimer.singleShot(0, show_error)
+                elif "Error" in ai_response:
+                    self.log_message("检查AI响应: 包含错误信息", "debug")
+                    error_msg = f"AI生成角色失败：{ai_response}"
+                    self.log_message(error_msg, "error")
+                    # 在主线程中显示错误
+                    def show_error():
+                        self.log_message("准备显示错误信息对话框", "debug")
+                        QMessageBox.critical(self, "错误", f"AI生成角色失败：{ai_response}")
+                    QTimer.singleShot(0, show_error)
+                else:
+                    self.log_message("AI响应检查通过，准备在主线程中处理结果...", "debug")
+                    # 将AI返回的完整内容输出到AI角色输出窗口中
+                    def show_success():
+                        self.log_message("在主线程中处理AI响应结果...", "debug")
+                        self.role_output.append("[AI] " + ai_response)
+                        self.log_message("AI生成角色成功，准备显示选择窗口...")
+                        # 在主线程中处理结果并显示选择窗口
+                        self.after_character_generation(ai_response, name_edit, background_edit)
+                        self.log_message("after_character_generation方法调用完成", "debug")
+                    
+                    # 确保在主线程中执行show_success
+                    from PyQt5.QtCore import Qt, Q_ARG
+                    QMetaObject.invokeMethod(self, "invoke_show_success", Qt.QueuedConnection, 
+                                           Q_ARG(object, show_success))
+                    self.log_message("已安排show_success任务", "debug")
+            except Exception as e:
+                self.log_message("<<< 异常退出generate_in_thread函数", "debug")
+                error_msg = f"AI生成角色失败：{str(e)}"
+                import traceback
+                self.log_message(f"异常详情: {error_msg}", "error")
+                self.log_message(f"异常堆栈: {traceback.format_exc()}", "error")
+                # 在主线程中显示错误
+                def show_error():
+                    self.log_message("准备显示异常对话框", "debug")
+                    QMessageBox.critical(self, "错误", f"AI生成角色失败：{str(e)}")
+                QTimer.singleShot(0, show_error)
+    
+        @pyqtSlot(object)
+        def invoke_show_success(self, show_success):
+            """在主线程中执行show_success函数"""
+            self.log_message("进入invoke_show_success方法", "debug")
+            try:
+                show_success()
+                self.log_message("show_success函数执行完成", "debug")
+            except Exception as e:
+                self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
+                import traceback
+                self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
+            self.log_message("退出invoke_show_success方法", "debug")
+    
+    def generate_worldview(self):
+        """使用AI生成世界观"""
+        # 获取用户输入的小说内容要求
+        user_prompt = self.user_input.toPlainText().strip()
+        if not user_prompt:
+            QMessageBox.warning(self, "警告", "请先输入小说内容要求！")
+            return
+        
+        # 显示生成进度信息到AI角色输出窗口
+        self.role_output.append("[系统] 开始生成世界观...")
+        
+        # 构造提示词
+        prompt = f"""你是一位专业的小说世界观构建师，擅长创造各种类型的奇幻世界。请根据以下小说内容要求，构建一个完整的世界观设定：
+
+小说内容要求：{user_prompt}
+
+请提供以下内容的详细描述：
+1. 世界名称和基本描述
+2. 世界的地理分布描述
+3. 世界的势力分布描述
+4. 世界的修炼体系或能力体系描述
+
+要求总字数不少于800字。请严格按照以下格式输出：
+世界观设定
+世界名称
+[世界名称和基本描述]
+地理分布
+[世界的地理分布描述]
+势力分布
+[世界的势力分布描述]
+修炼体系
+[世界的修炼体系或能力体系描述]
+"""
+        
+        # 在AI角色输出窗口显示提示词
+        self.role_output.append(f"### 世界观生成提示词 ###\n{prompt}")
+        
+        # 在新线程中生成内容，避免阻塞UI
+        def generate_in_thread():
+            try:
+                # 使用AI作家生成世界观
+                worldview_content = self.ai_writer.generate_worldview(prompt)
+                
+                # 使用信号在主线程中执行UI更新
+                self.worldview_generated.emit(worldview_content)
+                
+            except Exception as e:
+                # 在主线程中显示错误
+                def show_error():
+                    error_msg = f"生成世界观时发生异常：{str(e)}"
+                    self.role_output.append(f"[系统] {error_msg}")
+                    QMessageBox.critical(self, "错误", error_msg)
+                QTimer.singleShot(0, show_error)
+        
+        # 启动线程执行生成任务
+        thread = threading.Thread(target=generate_in_thread)
+        thread.daemon = True
+        thread.start()
+
+        self.role_output.append("[系统] 已启动世界观生成线程，请稍候...")
+    
+    @pyqtSlot(str)
+    def update_ui_from_signal(self, worldview_content):
+        """通过信号更新UI的槽函数"""
+        try:
+            # 在AI角色输出窗口显示AI生成的世界观内容
+            self.role_output.append(f"### AI生成的世界观内容 ###\n{worldview_content}")
+            
+            # 检查是否有错误信息
+            if "Error" in worldview_content:
+                error_msg = f"AI生成世界观失败：{worldview_content}"
+                self.role_output.append(f"[系统] {error_msg}")
+                # 使用QTimer避免可能的递归问题
+                QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", error_msg))
+                return
+            
+            # 格式化世界观内容，按照指定格式【世界观：\nXXX】
+            formatted_worldview = f"【世界观：\n{worldview_content}】"
+            
+            # 将生成的世界观内容添加到小说内容要求窗口中
+            current_content = self.user_input.toPlainText()
+            if current_content:
+                # 如果当前有内容，添加两个换行符再添加新内容
+                new_content = f"{current_content}\n\n{formatted_worldview}"
+            else:
+                # 如果当前无内容，直接添加新内容
+                new_content = formatted_worldview
+            
+            # 更新小说内容要求窗口
+            self.user_input.setPlainText(new_content)
+            
+            # 保存小说内容要求到文件
+            try:
+                with open("novel_requirements.txt", "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                self.role_output.append("[系统] 世界观已生成并添加到小说内容要求窗口，同时保存到novel_requirements.txt文件中。")
+            except Exception as e:
+                self.role_output.append(f"[系统] 警告：保存小说内容要求失败：{str(e)}")
+                
+        except Exception as e:
+            error_msg = f"更新UI时发生异常：{str(e)}"
+            self.role_output.append(f"[系统] {error_msg}")
+            QTimer.singleShot(0, lambda: QMessageBox.critical(self, "错误", error_msg))
+
+            # 将生成的世界观内容添加到小说内容要求窗口中
+            print("[调试] 准备将生成的世界观内容添加到小说内容要求窗口中")
+            current_content = self.user_input.toPlainText()
+            self.log_message(f"当前小说内容要求窗口内容长度: {len(current_content)} 字符", "debug")
+            print(f"[调试] 当前小说内容要求窗口内容长度: {len(current_content)} 字符")
+            if current_content:
+                # 如果当前有内容，添加两个换行符再添加新内容
+                new_content = f"{current_content}\n\n{formatted_worldview}"
+            else:
+                # 如果当前无内容，直接添加新内容
+                new_content = formatted_worldview
+            
+            self.log_message(f"新内容长度: {len(new_content)} 字符", "debug")
+            print(f"[调试] 新内容长度: {len(new_content)} 字符")
+            # 更新小说内容要求窗口
+            print("[调试] 准备更新小说内容要求窗口")
+            self.user_input.setPlainText(new_content)
+            print("[调试] 已更新小说内容要求窗口")
+            self.log_message("已更新小说内容要求窗口", "debug")
+            
+            # 保存小说内容要求到文件
+            print("[调试] 准备保存小说内容要求到文件")
+            try:
+                with open("novel_requirements.txt", "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                self.log_message("小说内容要求已成功保存到novel_requirements.txt", "info")
+                self.role_output.append("[系统] 世界观已生成并添加到小说内容要求窗口，同时保存到novel_requirements.txt文件中。")
+                self.log_message("已添加完成提示信息到AI角色输出窗口", "debug")
+                print("[调试] 已添加完成提示信息到AI角色输出窗口")
+            except Exception as e:
+                self.log_message(f"保存小说内容要求失败: {str(e)}", "error")
+                self.role_output.append(f"[系统] 警告：保存小说内容要求失败：{str(e)}")
+                self.log_message("已添加保存失败提示信息到AI角色输出窗口", "debug")
+                print(f"[调试] 保存小说内容要求失败: {str(e)}")
+                
+        except Exception as e:
+            print(f"[调试] update_ui_from_signal执行过程中发生异常: {e}")
+            self.log_message(f"update_ui_from_signal执行过程中发生异常: {e}", "error")
+            import traceback
+            self.log_message(f"update_ui_from_signal异常堆栈: {traceback.format_exc()}", "error")
+
+        def check_thread_status():
+            for i in range(1, 11):  # 检查10次，每次间隔5秒
+                time.sleep(5)
+                print(f"[调试] 线程状态检查 {i}/10 - 是否存活: {thread.is_alive()}")
+                self.log_message(f"线程状态检查 {i}/10 - 是否存活: {thread.is_alive()}", "debug")
+                if not thread.is_alive():
+                    print("[调试] 线程已结束运行")
+                    self.log_message("线程已结束运行", "debug")
+                    break
+            print("[调试] 线程状态检查完成")
+            self.log_message("线程状态检查完成", "debug")
+        threading.Thread(target=check_thread_status, daemon=True).start()
+        self.log_message("世界观生成线程已启动", "debug")
+
+        self.role_output.append("[系统] 已启动世界观生成线程，请稍候...")
+        self.log_message("已启动世界观生成线程", "debug")
     
     def parse_ai_character_response(self, response):
         """解析AI生成的角色响应"""
@@ -722,45 +1387,35 @@ class MainWindow(QMainWindow):
         for match in matches:
             name = match[0].strip()
             background = match[1].strip()
-            characters.append({
-                'name': name,
-                'background': background
-            })
-        
-        # 如果没有匹配到标准格式，尝试其他方式解析
-        if not characters:
-            # 分割响应为段落
-            paragraphs = response.split('\n\n')
-            for para in paragraphs:
-                if '角色名称' in para and '角色背景' in para:
-                    name_match = re.search(r'角色名称：(.*)', para)
-                    background_match = re.search(r'角色背景：(.*)', para)
-                    if name_match and background_match:
-                        name = name_match.group(1).strip()
-                        background = background_match.group(1).strip()
-                        characters.append({
-                            'name': name,
-                            'background': background
-                        })
-        
-        # 如果仍然没有解析到角色，尝试更宽松的匹配方式
-        if not characters:
-            # 尝试匹配"角色名称："和"角色背景："模式
-            name_matches = re.findall(r'角色名称：(.+)', response)
-            background_matches = re.findall(r'角色背景：(.+)', response)
             
-            # 如果找到匹配项，则按顺序组合
-            for i in range(min(len(name_matches), len(background_matches))):
-                name = name_matches[i].strip()
-                background = background_matches[i].strip()
+            # 确保名称和背景都不为空
+            if name and background:
                 characters.append({
                     'name': name,
                     'background': background
                 })
         
-        # 如果仍然没有解析到角色，尝试简单地按行分割并查找关键信息
+        # 如果没有匹配到角色，尝试其他可能的格式
         if not characters:
-            lines = response.split('\n')
+            # 尝试匹配简单的"名称: 背景"格式
+            simple_pattern = r'([^:\n]+):\s*(.*?)(?=\n[^:\n]+:|\s*$)'
+
+            simple_matches = re.findall(simple_pattern, response, re.DOTALL)
+            
+            for match in simple_matches:
+                name = match[0].strip()
+                background = match[1].strip()
+                
+                # 确保名称和背景都不为空且不是太短
+                if len(name) > 1 and len(background) > 10:
+                    characters.append({
+                        'name': name,
+                        'background': background
+                    })
+        
+        # 如果仍然没有匹配到角色，尝试按行解析
+        if not characters:
+            lines = response.strip().split('\n')
             current_character = {}
             for line in lines:
                 if '角色名称：' in line:
@@ -770,10 +1425,13 @@ class MainWindow(QMainWindow):
                     background = line.split('角色背景：', 1)[1].strip()
                     current_character['background'] = background
                     
-                # 如果当前角色信息完整，添加到列表中
-                if 'name' in current_character and 'background' in current_character:
-                    characters.append(current_character.copy())
-                    current_character = {}
+                    # 当我们有了名称和背景，就添加到角色列表中
+                    if 'name' in current_character and 'background' in current_character:
+                        characters.append({
+                            'name': current_character['name'],
+                            'background': current_character['background']
+                        })
+                        current_character = {}  # 重置为下一个角色做准备
         
         return characters
 
