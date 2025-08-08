@@ -219,10 +219,16 @@ class AIWriter:
         
         if feedback:
             # 构造包含反馈的提示
-            full_prompt = f"{professional_background}\n{prompt}\n\n编辑反馈：{feedback}{character_info}\n\n请根据编辑反馈修改内容，确保内容满足用户要求和编辑建议。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX...."
+            full_prompt = f"{professional_background}\n{prompt}\n\n编辑反馈：{feedback}{character_info}\n\n请根据编辑反馈修改内容，确保内容满足用户要求和编辑建议。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX....\n\n非常重要：必须严格遵守输出格式，使用【】括号标记章节标题和正文，并确保章节正文的字数满足要求。"
         else:
             # 构造不包含反馈的提示
-            full_prompt = f"{professional_background}\n{prompt}{character_info}\n\n请创作满足用户要求的小说章节内容。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX...."
+            full_prompt = f"{professional_background}\n{prompt}{character_info}\n\n请创作满足用户要求的小说章节内容。请严格按照以下格式输出：\n【第xx章  章节标题】\n【章节正文：\nXXXX】\n***其它说明内容***\nXXX....\n\n非常重要：必须严格遵守输出格式，使用【】括号标记章节标题和正文，并确保章节正文的字数满足要求。"
+        
+        # 添加字数检查逻辑
+        word_count_match = re.search(r'要求约(\d+)字', prompt)
+        if word_count_match:
+            required_word_count = int(word_count_match.group(1))
+            full_prompt += f"\n\n非常重要：生成的章节正文必须不少于{required_word_count}字，这是硬性要求。"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -407,9 +413,9 @@ class AISeniorWriter:
             character_info += "\n请在创作中安排这些角色与主角之间的互动，互动内容可以包括但不限于（战斗、聊天、谈情等）。"
         
         if feedback:
-            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改小说大纲。\n\n小说整体要求：{user_prompt}\n\n反馈意见：{feedback}{character_info}\n\n请提供一个包含{chapter_count}章的小说大纲，从第{start_chapter}章开始。每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改小说大纲。\n\n小说整体要求：{user_prompt}\n\n反馈意见：{feedback}{character_info}\n\n请提供一个包含{chapter_count}章的小说大纲，从第{start_chapter}章开始。每章需要包含章节标题和不少于500字的详细梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称\n5. 每章梗概内容必须不少于500字，要详细描述该章节的情节发展"
         else:
-            prompt = f"{professional_background}\n请为小说创作一个包含{chapter_count}章的大纲，从第{start_chapter}章开始。\n\n小说整体要求：{user_prompt}{character_info}\n\n每章需要包含章节标题和约500字的梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称"
+            prompt = f"{professional_background}\n请为小说创作一个包含{chapter_count}章的大纲，从第{start_chapter}章开始。\n\n小说整体要求：{user_prompt}{character_info}\n\n每章需要包含章节标题和不少于500字的详细梗概，并列出本章出现的角色及其背景关系。请严格按照以下格式输出：\n【第x章： 章节标题】\n【梗概内容： XXX】\n【本章出现角色：\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n<角色名称：xxx,角色说明(包括角色能力，社会关系，与主角之间关系等等描述内容)>\n...\n】\n***其它说明或描述内容***\nXXX...\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 各章节之间要有连贯性，情节发展要合理\n4. 角色名称要保持一致，不要串改角色名称\n5. 每章梗概内容必须不少于500字，要详细描述该章节的情节发展"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -427,12 +433,10 @@ class AISeniorWriter:
         else:
             # 使用在线API
             try:
-                import dashscope
-                from dashscope import Generation
                 response = Generation.call(
                     model=self.model,
                     prompt=prompt,
-                    max_tokens=4000,
+                    max_tokens=2000,
                     temperature=0.7
                 )
                 if response.status_code == 200:
@@ -595,12 +599,12 @@ class AISeniorWriter:
 """
         
         if feedback:
-            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n反馈意见：{feedback}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+            prompt = f"{professional_background}\n根据另一位资深作家的反馈修改第{chapter_num}章的内容。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}\n\n反馈意见：{feedback}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称\n5. 梗概内容必须不少于500字，要详细描述该章节的情节发展"
         else:
             if previous_chapters:
-                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称"
+                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n前面章节内容：{previous_chapters}{character_info}\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 重点参考前面章节的情节发展，不要参考尚未发生的后续章节内容\n4. 角色名称要与前几章保持一致，不要串改角色名称\n5. 梗概内容必须不少于500字，要详细描述该章节的情节发展"
             else:
-                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n这是小说的开始章节{character_info}，请提供第{chapter_num}章的标题和约500字的梗概，并列出本章出现的角色及其背景关系。\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称"
+                prompt = f"{professional_background}\n请为小说创作第{chapter_num}章的标题和梗概。\n\n小说整体要求：{user_prompt}\n\n这是小说的开始章节{character_info}，请提供第{chapter_num}章的标题和不少于500字的详细梗概，并列出本章出现的角色及其背景关系。\n\n{format_requirements}\n\n注意事项：\n1. 必须严格遵循小说整体要求进行创作\n2. 确保章节内容与小说整体风格和设定保持一致\n3. 角色名称要与前几章保持一致，不要串改角色名称\n5. 梗概内容必须不少于500字，要详细描述该章节的情节发展"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -764,7 +768,7 @@ class AIReader:
         评估章节内容，返回评分和建议
         """
         professional_background = "你是一位专业的网文小说读者，有丰富的网络文学阅读经验，能够准确评价作品的优劣。"
-        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、节奏控制等方面进行评价，并给出1-10分的评分。如果评分低于9.5分，请给出具体的修改建议。\n\n请严格按照以下格式输出：\n【最终评分：x.x分（10分为满分）】\n【评价内容：\nXXXX】"
+        prompt = f"{professional_background}\n请评价以下小说内容：{content}\n\n请从情节吸引力、文字表达、节奏控制、字数符合度等方面进行评价，并给出1-10分的评分。如果评分低于9.0分，请给出具体的修改建议。\n\n请严格按照以下格式输出：\n【最终评分：x.x分（10分为满分）】\n【评价内容：\nXXXX】"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -853,7 +857,7 @@ class AIEditor:
 
     def edit_content(self, original_content, review_comments):
         professional_background = "你是一位专业的网文小说编辑，有丰富的文学编辑经验，能够根据评价意见对作品进行修改完善。"
-        prompt = f"{professional_background}\n原文内容：{original_content}\n\n评价意见：{review_comments}\n\n请根据评价意见修改原文内容，使作品更加优秀。请严格按照原文格式输出修改后的内容。"
+        prompt = f"{professional_background}\n原文内容：{original_content}\n\n评价意见：{review_comments}\n\n请根据评价意见修改原文内容，使作品更加优秀。请严格按照原文格式输出修改后的内容，保持章节标题和正文的【】标记格式不变。"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成
@@ -885,8 +889,15 @@ class AIEditor:
         """
         审核内容并给出最终意见
         """
+        # 读取审核规则
+        try:
+            with open("审核规则.txt", "r", encoding="utf-8") as f:
+                review_rules = f.read()
+        except FileNotFoundError:
+            review_rules = "未找到审核规则文件"
+        
         professional_background = "你是一位专业的网文小说编辑，有丰富的文学编辑经验，能够判断作品是否符合出版要求。"
-        prompt = f"{professional_background}\n请审核以下小说内容是否符合出版要求：{content}\n\n请从情节合理性、文字表达、逻辑性、是否符合网文规范等方面进行审核。如果内容符合要求，请回复【最终审核结果：审核通过】，否则请回复【最终审核结果：审核不通过】，并给出具体原因和修改建议。"
+        prompt = f"{professional_background}\n请根据以下审核规则审核小说内容：\n{review_rules}\n\n小说内容：{content}\n\n请严格按照以下格式输出审核结果：\n【最终审核结果：审核通过或审核不通过】\n【审核意见：\n XXX。】\n***其它说明描述***"
         
         if self.use_local and self.local_model_path:
             # 等待模型加载完成

@@ -147,20 +147,31 @@ class Worker(QObject):
                     self.progress.emit("读者", "### 评价中... ###")
                     evaluation = self.ai_reader.evaluate_content(content_text)
                     # 在AI角色输出窗口显示AI读者的评价内容，使用指定格式
-                    self.progress.emit("读者", f"【评价内容】\n【{evaluation}】")
+                    self.progress.emit("读者", f"【最终评分：x.x分（10分为满分）】\n【评价内容：\n{evaluation}】")
 
                     # 解析AI读者评分
                     reader_satisfied = False
                     rating = self.extract_rating(evaluation)
+                    evaluation_content = self.extract_evaluation_content(evaluation)
+                    
+                    # 检查生成内容的字数是否符合要求
+                    content_word_count = len(content)
+                    if content_word_count < self.words_per_chapter:
+                        # 如果字数不足，在评分上进行扣分
+                        word_count_penalty = (self.words_per_chapter - content_word_count) / self.words_per_chapter * 2  # 最多扣2分
+                        if rating is not None:
+                            rating = max(1.0, rating - word_count_penalty)  # 不低于1分
+                        self.progress.emit("读者", f"【字数检查：当前字数{content_word_count}，要求不少于{self.words_per_chapter}字，字数不足将影响评分】")
+                    
                     if rating is not None:
-                        self.progress.emit("读者", f"【评分：{rating}/10分】\n【修改意见：{evaluation}】")
+                        self.progress.emit("读者", f"【最终评分：{rating}/10分】\n【评价内容：\n{evaluation_content}】")
                     else:
-                        self.progress.emit("读者", f"【修改意见：{evaluation}】")
+                        self.progress.emit("读者", f"【评价内容：\n{evaluation_content}】")
                     
                     # 检查AI读者是否满意
                     reader_satisfied = False
                     if rating is not None:
-                        if rating >= 9.5:
+                        if rating >= 9.0:
                             reader_satisfied = True
                     else:
                         # 如果无法提取评分，则使用原来的判断方法
@@ -200,7 +211,7 @@ class Worker(QObject):
                     # 在AI角色输出窗口显示审核内容，使用指定格式
                     self.progress.emit("编辑", f"【审核意见】\n【{review}】")
 
-                    # 检查AI编辑是否满意（通过检查是否包含【最终审核结果：审核通过】）
+                    # 检查AI编辑是否满意（通过严格检查输出格式）
                     editor_satisfied = False
                     if review and "【最终审核结果：审核通过】" in review:
                         editor_satisfied = True
@@ -210,26 +221,23 @@ class Worker(QObject):
                         final_content = chapter_content
                         break  # AI编辑满意，跳出循环
                     else:
-                        # 检查是否明确不通过
-                        if review and "【最终审核结果：审核通过】" in review:
-                            self.progress.emit("编辑", f"【第{chapter_num}章审核通过】\n### ✅ 最终结论：\n> **【第{chapter_num}章审核通过】**——本章内容符合要求，可以使用")
-                            final_content = chapter_content
-                            break  # AI编辑满意，跳出循环
-                        else:
+                        # 严格检查审核结果格式
+                        if review and "【最终审核结果：" in review and "】" in review:
                             # 检查是否明确不通过
-                            if review and "【最终审核结果：审核不通过】" in review:
+                            if "【最终审核结果：审核不通过】" in review:
                                 self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
                             else:
-                                # 其他情况也视为不通过
-                                self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
-                            # AI编辑不满意，需要AI作家根据编辑意见修改内容
-                            self.progress.emit("作家", "### 根据编辑意见修改中... ###")
-                            edit_feedback = review
-                            modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=edit_feedback)
-                            # 解析修改后的内容
-                            modified_title, modified_text = self._parse_chapter_content(modified_content)
-                            self.progress.emit("作家", f"【第{chapter_num}章 {modified_title}】\n【{modified_text}】")
-                            chapter_content = modified_text  # 更新内容供下一轮审核
+                                # 格式正确但不是"审核不通过"，也视为不通过
+                                self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——编辑输出格式不正确或内容不符合要求:\n{review}")
+                        else:
+                            # 格式完全不正确
+                            self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——编辑未按照指定格式输出审核结果:\n{review}")
+                        
+                        # AI编辑不满意，需要AI作家根据编辑意见修改内容
+                        self.progress.emit("作家", "### 根据编辑意见修改中... ###")
+                        modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=review)
+                        self.progress.emit("作家", f"【第{chapter_num}章： {chapter_title}】\n【章节正文：\n{modified_content}】")
+                        chapter_content = modified_content  # 更新内容供下一轮审核
                 
                 # 第二阶段总是成功完成（因为是无限循环直到满意）
                 if not final_content:
@@ -287,6 +295,7 @@ class ChapterQueueWorker(QObject):
             r'(\d+(?:\.\d+)?)\s*分',  # X.X分 或 X分
             r'评分[：:]\s*(\d+(?:\.\d+)?)',  # 评分：X.X
             r'打分[：:]\s*(\d+(?:\.\d+)?)',  # 打分：X.X
+            r'【最终评分：(\d+(?:\.\d+)?)分',  # 新格式：【最终评分：x.x分
         ]
         
         for pattern in patterns:
@@ -434,6 +443,15 @@ class ChapterQueueWorker(QObject):
                     rating = self.extract_rating(evaluation)
                     evaluation_content = self.extract_evaluation_content(evaluation)
                     
+                    # 检查生成内容的字数是否符合要求
+                    content_word_count = len(content)
+                    if content_word_count < self.words_per_chapter:
+                        # 如果字数不足，在评分上进行扣分
+                        word_count_penalty = (self.words_per_chapter - content_word_count) / self.words_per_chapter * 2  # 最多扣2分
+                        if rating is not None:
+                            rating = max(1.0, rating - word_count_penalty)  # 不低于1分
+                        self.progress.emit("读者", f"【字数检查：当前字数{content_word_count}，要求不少于{self.words_per_chapter}字，字数不足将影响评分】")
+                    
                     if rating is not None:
                         self.progress.emit("读者", f"【最终评分：{rating}/10分】\n【评价内容：\n{evaluation_content}】")
                     else:
@@ -491,7 +509,7 @@ class ChapterQueueWorker(QObject):
                     # 在AI角色输出窗口显示审核内容，使用指定格式
                     self.progress.emit("编辑", f"【审核意见】\n【{review}】")
 
-                    # 检查AI编辑是否满意（通过检查是否包含【最终审核结果：审核通过】）
+                    # 检查AI编辑是否满意（通过严格检查输出格式）
                     editor_satisfied = False
                     if review and "【最终审核结果：审核通过】" in review:
                         editor_satisfied = True
@@ -501,21 +519,15 @@ class ChapterQueueWorker(QObject):
                         final_content = chapter_content
                         break  # AI编辑满意，跳出循环
                     else:
-                        # 检查是否明确不通过
-                        if review and "【最终审核结果：审核通过】" in review:
-                            self.progress.emit("编辑", f"【第{chapter_num}章审核通过】\n### ✅ 最终结论：\n> **【第{chapter_num}章审核通过】**——本章内容符合要求，可以使用")
-                            final_content = chapter_content
-                            break  # AI编辑满意，跳出循环
+                        # 严格检查审核不通过的格式
+                        if review and "【最终审核结果：审核不通过】" in review:
+                            self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
                         else:
-                            # 检查是否明确不通过
-                            if review and "【最终审核结果：审核不通过】" in review:
-                                self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
-                            else:
-                                # 其他情况也视为不通过
-                                self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——需要根据以下意见进行修改:\n{review}")
+                            # 如果格式不正确，也视为不通过
+                            self.progress.emit("编辑", f"【第{chapter_num}章审核不通过】\n### ❌ 最终结论：\n> **【第{chapter_num}章审核不通过】**——编辑输出格式不正确或内容不符合要求:\n{review}")
                             # AI编辑不满意，需要AI作家根据编辑意见修改内容
                             self.progress.emit("作家", "### 根据编辑意见修改中... ###")
-                            modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=edit_feedback)
+                            modified_content = self.ai_writer.generate_content(chapter_prompt, feedback=review)
                             self.progress.emit("作家", f"【第{chapter_num}章： {chapter_title}】\n【章节正文：\n{modified_content}】")
                             chapter_content = modified_content  # 更新内容供下一轮审核
                 # 检查是否因用户中断而退出循环
@@ -566,8 +578,13 @@ class ChapterQueueWorker(QObject):
         """
         import re
         
-        # 提取章节标题
+        # 提取章节标题，同时处理多种格式
         title_match = re.search(r'【第\d+章\s+(.*?)】', content_text)
+        if not title_match:
+            title_match = re.search(r'【第\d+章：\s+(.*?)】', content_text)
+        if not title_match:
+            title_match = re.search(r'【(第\d+章.*?)】', content_text)
+        
         title = title_match.group(1) if title_match else "待定章节"
         
         # 提取章节内容

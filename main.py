@@ -2271,14 +2271,20 @@ class MainWindow(QMainWindow):
                 chapter_outline = outline
                 break
     
-        if chapter_outline:
-            chapter_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
+        if chapter_title.startswith(f"第{chapter_num}章"):
+            # 如果chapter_title已经包含"第X章"前缀，则直接使用
+            display_title = chapter_title
+        elif chapter_outline:
+            # 如果没有前缀但有大纲信息，则添加前缀
+            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
         else:
-            chapter_title = f"第{chapter_num}章"
+            # 如果既没有前缀也没有大纲信息，则使用默认格式
+            display_title = f"第{chapter_num}章 {chapter_title}"
         
         # 计算字数
         char_count = len(cleaned_content.strip()) if cleaned_content else 0
-        chapter_title_with_count = f"{chapter_title}（本章正文共{char_count}字）"
+        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
         
         # 检查是否已经存在该章节项
         if chapter_num in self.chapter_items_map:
@@ -2288,12 +2294,153 @@ class MainWindow(QMainWindow):
             chapter_item['content_text'].setPlainText(cleaned_content)
         else:
             # 添加新项
-            chapter_item = self.add_chapter_item(chapter_num, chapter_title, cleaned_content)
+            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
             self.chapter_items_map[chapter_num] = chapter_item
         
-        # 将内容关联到大纲列表中的相应章节，不更新标题
+        # 更新大纲列表相应章节的信息
         if chapter_outline:
+            # 更新大纲列表中该章节的标题（如果需要）
+            title_edit = chapter_outline.get('title_edit')
+            
+            if title_edit:
+                # 只更新章节标题部分，不包含"第X章"前缀
+                if display_title.startswith(f"第{chapter_num}章 "):
+                    title_edit.setText(display_title[len(f"第{chapter_num}章 "):])
+                else:
+                    title_edit.setText(display_title)
+                
+            # 保存章节内容到大纲数据结构中（正确保存到content字段，而不是summary字段）
+            chapter_outline['content'] = cleaned_content
+    
+        # 强制更新UI
+        self.final_result.repaint()
+        self.final_result.scrollToBottom()
+        
+        # 自动保存小说大纲
+        self.save_novel_outline()
+
+    def on_chapter_generated(self, chapter_num, chapter_title, content):
+        """
+        处理章节生成完成事件
+        """
+        # 清理章节内容，移除AI生成的标记性内容
+        cleaned_content = content
+        # 移除常见的AI标记内容
+        import re
+        # 移除以【】包围的标记内容
+        cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
+        # 移除以[]包围的标记内容（英文方括号）
+        cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
+        # 清理多余的空白行
+        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        
+        # 查找该章节在大纲中的信息
+        chapter_outline = None
+        for outline in self.novel_outline:
+            if outline['chapter_num'] == chapter_num:
+                chapter_outline = outline
+                break
+    
+        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
+        if chapter_title.startswith(f"第{chapter_num}章"):
+            # 如果chapter_title已经包含"第X章"前缀，则直接使用
+            display_title = chapter_title
+        elif chapter_outline:
+            # 如果没有前缀但有大纲信息，则添加前缀
+            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        else:
+            # 如果既没有前缀也没有大纲信息，则使用默认格式
+            display_title = f"第{chapter_num}章 {chapter_title}"
+        
+        # 计算字数
+        char_count = len(cleaned_content.strip()) if cleaned_content else 0
+        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
+        
+        # 检查是否已经存在该章节项
+        if chapter_num in self.chapter_items_map:
+            # 更新现有项
+            chapter_item = self.chapter_items_map[chapter_num]
+            chapter_item['title_label'].setText(chapter_title_with_count)
+            chapter_item['content_text'].setPlainText(cleaned_content)
+        else:
+            # 添加新项
+            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
+            self.chapter_items_map[chapter_num] = chapter_item
+        
+        # 更新大纲列表相应章节的信息
+        if chapter_outline:
+            # 更新大纲列表中该章节的标题（如果需要）
+            title_edit = chapter_outline.get('title_edit')
+            
+            if title_edit:
+                # 只更新章节标题部分，不包含"第X章"前缀
+                if display_title.startswith(f"第{chapter_num}章 "):
+                    title_edit.setText(display_title[len(f"第{chapter_num}章 "):])
+                else:
+                    title_edit.setText(display_title)
+                
             # 保存章节内容到大纲数据结构中（正确保存到content字段）
+            chapter_outline['content'] = cleaned_content
+    
+        # 强制更新UI
+        self.final_result.repaint()
+        self.final_result.scrollToBottom()
+        
+        # 自动保存小说大纲
+        self.save_novel_outline()
+
+    def on_chapter_generated(self, chapter_num, chapter_title, content):
+        """
+        处理章节生成完成事件
+        """
+        # 清理章节内容，移除AI生成的标记性内容
+        cleaned_content = content
+        # 移除常见的AI标记内容
+        import re
+        # 移除以【】包围的标记内容
+        cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
+        # 移除以[]包围的标记内容（英文方括号）
+        cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
+        # 清理多余的空白行
+        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        
+        # 查找该章节在大纲中的信息
+        chapter_outline = None
+        for outline in self.novel_outline:
+            if outline['chapter_num'] == chapter_num:
+                chapter_outline = outline
+                break
+    
+        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
+        if chapter_title.startswith(f"第{chapter_num}章"):
+            # 如果chapter_title已经包含"第X章"前缀，则直接使用
+            display_title = chapter_title
+        elif chapter_outline:
+            # 如果没有前缀但有大纲信息，则添加前缀
+            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        else:
+            # 如果既没有前缀也没有大纲信息，则使用默认格式
+            display_title = f"第{chapter_num}章 {chapter_title}"
+        
+        # 计算字数
+        char_count = len(cleaned_content.strip()) if cleaned_content else 0
+        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
+        
+        # 检查是否已经存在该章节项
+        if chapter_num in self.chapter_items_map:
+            # 更新现有项
+            chapter_item = self.chapter_items_map[chapter_num]
+            chapter_item['title_label'].setText(chapter_title_with_count)
+            chapter_item['content_text'].setPlainText(cleaned_content)
+        else:
+            # 添加新项
+            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
+            self.chapter_items_map[chapter_num] = chapter_item
+        
+        # 更新大纲列表相应章节的信息
+        # 根据要求，只更新content字段，不更新章节标题和梗概
+        if chapter_outline:
+            # 保存章节内容到大纲数据结构中（只更新content字段）
             chapter_outline['content'] = cleaned_content
     
         # 强制更新UI
@@ -2325,11 +2472,130 @@ class MainWindow(QMainWindow):
                 chapter_outline = outline
                 break
     
+        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
+        if chapter_title.startswith(f"第{chapter_num}章"):
+            # 如果chapter_title已经包含"第X章"前缀，则直接使用
+            display_title = chapter_title
+        elif chapter_outline:
+            # 如果没有前缀但有大纲信息，则添加前缀
+            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        else:
+            # 如果既没有前缀也没有大纲信息，则使用默认格式
+            display_title = f"第{chapter_num}章 {chapter_title}"
+        
+        # 计算字数
+        char_count = len(cleaned_content.strip()) if cleaned_content else 0
+        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
+        
+        # 检查是否已经存在该章节项
+        if chapter_num in self.chapter_items_map:
+            # 更新现有项
+            chapter_item = self.chapter_items_map[chapter_num]
+            chapter_item['title_label'].setText(chapter_title_with_count)
+            chapter_item['content_text'].setPlainText(cleaned_content)
+        else:
+            # 添加新项
+            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
+            self.chapter_items_map[chapter_num] = chapter_item
+        
+        # 更新大纲列表相应章节的信息
+        # 根据要求，只更新content字段，不更新章节标题和梗概
+        if chapter_outline:
+            # 保存章节内容到大纲数据结构中（只更新content字段）
+            chapter_outline['content'] = cleaned_content
+    
+        # 强制更新UI
+        self.final_result.repaint()
+        self.final_result.scrollToBottom()
+        
+        # 自动保存小说大纲
+        self.save_novel_outline()
+
+        import re
+        # 移除以【】包围的标记内容
+        cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
+        # 移除以[]包围的标记内容（英文方括号）
+        cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
+        # 清理多余的空白行
+        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        
+        # 查找该章节在大纲中的信息
+        chapter_outline = None
+        for outline in self.novel_outline:
+            if outline['chapter_num'] == chapter_num:
+                chapter_outline = outline
+                break
+    
+        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
+        if chapter_title.startswith(f"第{chapter_num}章"):
+            # 如果chapter_title已经包含"第X章"前缀，则直接使用
+            display_title = chapter_title
+        elif chapter_outline:
+            # 如果没有前缀但有大纲信息，则添加前缀
+            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
+        else:
+            # 如果既没有前缀也没有大纲信息，则使用默认格式
+            display_title = f"第{chapter_num}章 {chapter_title}"
+        
+        # 计算字数
+        char_count = len(cleaned_content.strip()) if cleaned_content else 0
+        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
+        
+        # 检查是否已经存在该章节项
+        if chapter_num in self.chapter_items_map:
+            # 更新现有项
+            chapter_item = self.chapter_items_map[chapter_num]
+            chapter_item['title_label'].setText(chapter_title_with_count)
+            chapter_item['content_text'].setPlainText(cleaned_content)
+        else:
+            # 添加新项
+            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
+            self.chapter_items_map[chapter_num] = chapter_item
+        
+        # 更新大纲列表相应章节的信息
+        if chapter_outline:
+            # 更新大纲列表中该章节的标题（如果需要）
+            title_edit = chapter_outline.get('title_edit')
+            
+            if title_edit:
+                # 只更新章节标题部分，不包含"第X章"前缀
+                if display_title.startswith(f"第{chapter_num}章 "):
+                    title_edit.setText(display_title[len(f"第{chapter_num}章 "):])
+                else:
+                    title_edit.setText(display_title)
+                
+            # 保存章节内容到大纲数据结构中（正确保存到content字段）
+            chapter_outline['content'] = cleaned_content
+    
+        # 强制更新UI
+        self.final_result.repaint()
+        self.final_result.scrollToBottom()
+        
+        # 自动保存小说大纲
+        self.save_novel_outline()
+
+
+    def get_outline_selected_chapters(self):
+        """获取大纲中选中的章节列表"""
+        selected_chapters = []
+        for chapter in self.novel_outline:
+            if chapter.get('checkbox') and chapter['checkbox'].isChecked():
+                selected_chapters.append(chapter)
+        return selected_chapters
+
+    def update_chapter_item(self, chapter_num, display_title, cleaned_content):
+        """更新章节项"""
+        chapter_outline = None
+        for outline in self.novel_outline:
+            if outline['chapter_num'] == chapter_num:
+                chapter_outline = outline
+                break
+
         if chapter_outline:
             chapter_title = f"第{chapter_num}章 {chapter_outline['title']}"
         else:
             chapter_title = f"第{chapter_num}章"
-        
+    
         # 计算字数
         char_count = len(cleaned_content.strip()) if cleaned_content else 0
         chapter_title_with_count = f"{chapter_title}（本章正文共{char_count}字）"
@@ -2349,13 +2615,13 @@ class MainWindow(QMainWindow):
         if chapter_outline:
             # 保存章节内容到大纲数据结构中（正确保存到content字段）
             chapter_outline['content'] = cleaned_content
-    
         # 强制更新UI
         self.final_result.repaint()
         self.final_result.scrollToBottom()
         
         # 自动保存小说大纲
         self.save_novel_outline()
+
 
     def get_outline_selected_chapters(self):
         """获取大纲中选中的章节列表"""
@@ -2774,11 +3040,11 @@ class MainWindow(QMainWindow):
         char_count = len(content.strip()) if content else 0
         
         # 上部分：章节标题（包含字数统计）
-        # 修复：检查title是否已经包含"第X章"前缀，避免重复显示
-        if not title.startswith(f"第{chapter_num}章"):
-            title_with_count = f"第{chapter_num}章 {title}（本章正文共{char_count}字）"
-        else:
+        # 优化：检查title是否已经包含"第X章"前缀，避免重复显示
+        if title.startswith(f"第{chapter_num}章"):
             title_with_count = f"{title}（本章正文共{char_count}字）"
+        else:
+            title_with_count = f"第{chapter_num}章 {title}（本章正文共{char_count}字）"
             
         title_label = QLabel(title_with_count)
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -2808,19 +3074,38 @@ class MainWindow(QMainWindow):
             'title_label': title_label,
             'content_text': content_text
         }
-
-    def toggle_select_all(self, state):
-        """全选/取消全选功能"""
-        # Qt.Checked = 2, Qt.Unchecked = 0, Qt.PartiallyChecked = 1
-        is_checked = state == Qt.Checked
-        
         # 阻止信号触发，避免递归
         self.select_all_checkbox.blockSignals(True)
+        
+        is_checked = state == Qt.Checked
         
         for chapter in self.novel_outline:
             chapter['checkbox'].setChecked(is_checked)
             
         self.select_all_checkbox.blockSignals(False)
+
+    def toggle_select_all(self, state):
+        """全选/取消全选所有章节"""
+        # 阻止信号触发，避免递归
+        self.select_all_checkbox.blockSignals(True)
+        
+        is_checked = state == Qt.Checked
+        
+        for chapter in self.novel_outline:
+            chapter['checkbox'].setChecked(is_checked)
+            
+        self.select_all_checkbox.blockSignals(False)
+
+    def on_outline_item_clicked(self, item):
+        """处理大纲项点击事件"""
+        # 获取点击的项的组件引用
+        widget = self.final_result.itemWidget(item)
+        title_label = widget.findChild(QLabel, 'title_label')
+        content_text = widget.findChild(QTextEdit, 'content_text')
+        
+        # 显示详细信息
+        self.title_input.setText(title_label.text())
+        self.content_input.setPlainText(content_text.toPlainText())
 
     def add_outline_item(self, chapter_num, title, summary):
         """向大纲列表中添加一个新的大纲项"""
