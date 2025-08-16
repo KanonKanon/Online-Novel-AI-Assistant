@@ -2249,11 +2249,11 @@ class MainWindow(QMainWindow):
             # 显示中断信息
             self.role_output.append("[系统] 大纲生成已中断")
 
-    def on_chapter_generated(self, chapter_num, chapter_title, content):
+    def update_chapter_content_from_queue(self, chapter_num, chapter_title, content):
         """
-        处理章节生成完成事件
+        从队列中更新章节内容
         """
-        # 清理章节内容，移除AI生成的标记性内容
+        # 清理章节内容，移除AI生成的标记性内容，但保留换行符和必要空格
         cleaned_content = content
         # 移除常见的AI标记内容
         import re
@@ -2261,8 +2261,10 @@ class MainWindow(QMainWindow):
         cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
         # 移除以[]包围的标记内容（英文方括号）
         cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
-        # 清理多余的空白行
-        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        # 清理过多的连续空白行，但保留单个换行符
+        cleaned_content = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_content)
+        # 去除首尾空白字符
+        cleaned_content = cleaned_content.strip()
         
         # 查找该章节在大纲中的信息
         chapter_outline = None
@@ -2298,18 +2300,9 @@ class MainWindow(QMainWindow):
             self.chapter_items_map[chapter_num] = chapter_item
         
         # 更新大纲列表相应章节的信息
+        # 根据要求，只更新content字段，不更新章节标题和梗概
         if chapter_outline:
-            # 更新大纲列表中该章节的标题（如果需要）
-            title_edit = chapter_outline.get('title_edit')
-            
-            if title_edit:
-                # 只更新章节标题部分，不包含"第X章"前缀
-                if display_title.startswith(f"第{chapter_num}章 "):
-                    title_edit.setText(display_title[len(f"第{chapter_num}章 "):])
-                else:
-                    title_edit.setText(display_title)
-                
-            # 保存章节内容到大纲数据结构中（正确保存到content字段，而不是summary字段）
+            # 保存章节内容到大纲数据结构中（只更新content字段）
             chapter_outline['content'] = cleaned_content
     
         # 强制更新UI

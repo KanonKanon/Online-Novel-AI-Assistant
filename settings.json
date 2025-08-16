@@ -3,11 +3,11 @@
     "writer_key": "sk-c28e543b787546e2a583992d5afe9b09",
     "reader_key": "ssk-c28e543b787546e2a583992d5afe9b09",
     "editor_key": "sk-c28e543b787546e2a583992d5afe9b09",
-    "writer_model": "qwen-max-2025-01-25",
-    "reader_model": "qwen-max-0403",
-    "editor_model": "qwen-max-0403",
+    "writer_model": "qwen-plus-2025-07-28",
+    "reader_model": "qwen-plus-2025-07-14",
+    "editor_model": "qwen-plus-2025-07-14",
     "senior_writer1_key": "sk-c28e543b787546e2a583992d5afe9b09",
-    "senior_writer1_model": "qwen-max-0919",
+    "senior_writer1_model": "qwen-plus-0112",
     "senior_writer2_key": "sk-c28e543b787546e2a583992d5afe9b09",
-    "senior_writer2_model": "qwen-max-0428"
+    "senior_writer2_model": "qwen-plus-1220"
 }
