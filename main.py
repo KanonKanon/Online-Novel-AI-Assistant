@@ -507,6 +507,7 @@ class MainWindow(QMainWindow):
         
         self.log_message("小说主题检查通过", "debug")
         # 显示生成进度信息到AI角色输出窗口
+        self.role_output.append("[系统] 开始生成角色...")
         self.log_message("开始AI角色生成...")
         
         # 在新线程中生成内容
@@ -568,19 +569,118 @@ class MainWindow(QMainWindow):
                     self.log_message("准备显示异常对话框", "debug")
                     QMessageBox.critical(self, "错误", f"AI生成角色失败：{str(e)}")
                 QTimer.singleShot(0, show_error)
+        
+        # 启动线程执行生成任务
+        thread = threading.Thread(target=generate_in_thread)
+        thread.daemon = True
+        thread.start()
+        
+        self.log_message("已启动角色生成线程", "debug")
+        self.role_output.append("[系统] 已启动角色生成线程，请稍候...")
+
+    def after_character_generation(self, ai_response, name_edit, background_edit):
+        """处理AI生成的角色信息并显示选择窗口"""
+        self.log_message(">>> 进入after_character_generation方法", "debug")
+        try:
+            # 解析AI响应获取角色列表
+            characters = self.parse_ai_character_response(ai_response)
+            self.log_message(f"解析出 {len(characters)} 个角色", "debug")
+            
+            if not characters:
+                self.log_message("未解析到任何角色信息", "warning")
+                self.role_output.append("[系统] 未解析到任何角色信息，请检查AI响应格式")
+                return
+            
+            # 创建选择对话框
+            dialog = QDialog(self)
+            dialog.setWindowTitle("选择角色")
+            dialog.setGeometry(0, 0, 500, 400)
+            
+            # 将对话框居中显示在主窗口中央
+            dialog.move(
+                self.geometry().center().x() - dialog.width() // 2,
+                self.geometry().center().y() - dialog.height() // 2
+            )
+            
+            layout = QVBoxLayout(dialog)
+            
+            # 添加说明标签
+            label = QLabel("AI已生成以下角色，请选择一个或手动输入：")
+            layout.addWidget(label)
+            
+            # 创建角色列表
+            character_list = QListWidget()
+            for i, character in enumerate(characters):
+                item_text = f"【角色设计{i+1}】\n角色名称：{character['name']}\n角色背景：{character['background']}"
+                item = QListWidgetItem(item_text)
+                character_list.addItem(item)
+            layout.addWidget(character_list)
+            
+            # 添加手动输入框
+            manual_name_edit = QLineEdit()
+            manual_name_edit.setPlaceholderText("手动输入角色名称")
+            layout.addWidget(manual_name_edit)
+            manual_background_edit = QTextEdit()
+            manual_background_edit.setPlaceholderText("手动输入角色背景")
+            layout.addWidget(manual_background_edit)
+            
+            # 添加按钮
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            def on_accepted():
+                # 检查用户是否选择了列表中的角色
+                selected_items = character_list.selectedItems()
+                if selected_items:
+                    # 解析选中角色的信息
+                    selected_text = selected_items[0].text()
+                    lines = selected_text.split('\n')
+                    if len(lines) >= 3:
+                        # 提取角色名称和背景
+                        name = lines[1].replace("角色名称：", "").strip()
+                        background = lines[2].replace("角色背景：", "").strip()
+                        
+                        # 更新父对话框中的编辑框
+                        name_edit.setText(name)
+                        background_edit.setPlainText(background)
+                else:
+                    # 检查用户是否手动输入了角色信息
+                    manual_name = manual_name_edit.text().strip()
+                    manual_background = manual_background_edit.toPlainText().strip()
+                    
+                    if manual_name:
+                        name_edit.setText(manual_name)
+                        background_edit.setPlainText(manual_background)
+            
+            # 连接对话框的accepted信号
+            dialog.accepted.connect(on_accepted)
+            
+            # 显示对话框
+            self.log_message("显示角色选择对话框", "debug")
+            dialog.exec_()
+            
+        except Exception as e:
+            self.log_message(f"处理AI角色响应时发生异常: {str(e)}", "error")
+            import traceback
+            self.log_message(f"异常堆栈: {traceback.format_exc()}", "error")
+            QMessageBox.critical(self, "错误", f"处理AI角色响应时发生异常：{str(e)}")
+        
+        self.log_message("<<< 退出after_character_generation方法", "debug")
     
-        @pyqtSlot(object)
-        def invoke_show_success(self, show_success):
-            """在主线程中执行show_success函数"""
-            self.log_message("进入invoke_show_success方法", "debug")
-            try:
-                show_success()
-                self.log_message("show_success函数执行完成", "debug")
-            except Exception as e:
-                self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
-                import traceback
-                self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
-            self.log_message("退出invoke_show_success方法", "debug")
+    @pyqtSlot(object)
+    def invoke_show_success(self, show_success):
+        """在主线程中执行show_success函数"""
+        self.log_message("进入invoke_show_success方法", "debug")
+        try:
+            show_success()
+            self.log_message("show_success函数执行完成", "debug")
+        except Exception as e:
+            self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
+            import traceback
+            self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
+        self.log_message("退出invoke_show_success方法", "debug")
     
     def generate_worldview(self):
         """使用AI生成世界观"""
@@ -1137,6 +1237,7 @@ class MainWindow(QMainWindow):
         
         self.log_message("小说主题检查通过", "debug")
         # 显示生成进度信息到AI角色输出窗口
+        self.role_output.append("[系统] 开始生成角色...")
         self.log_message("开始AI角色生成...")
         
         # 在新线程中生成内容
@@ -1198,19 +1299,118 @@ class MainWindow(QMainWindow):
                     self.log_message("准备显示异常对话框", "debug")
                     QMessageBox.critical(self, "错误", f"AI生成角色失败：{str(e)}")
                 QTimer.singleShot(0, show_error)
+        
+        # 启动线程执行生成任务
+        thread = threading.Thread(target=generate_in_thread)
+        thread.daemon = True
+        thread.start()
+        
+        self.log_message("已启动角色生成线程", "debug")
+        self.role_output.append("[系统] 已启动角色生成线程，请稍候...")
+
+    def after_character_generation(self, ai_response, name_edit, background_edit):
+        """处理AI生成的角色信息并显示选择窗口"""
+        self.log_message(">>> 进入after_character_generation方法", "debug")
+        try:
+            # 解析AI响应获取角色列表
+            characters = self.parse_ai_character_response(ai_response)
+            self.log_message(f"解析出 {len(characters)} 个角色", "debug")
+            
+            if not characters:
+                self.log_message("未解析到任何角色信息", "warning")
+                self.role_output.append("[系统] 未解析到任何角色信息，请检查AI响应格式")
+                return
+            
+            # 创建选择对话框
+            dialog = QDialog(self)
+            dialog.setWindowTitle("选择角色")
+            dialog.setGeometry(0, 0, 500, 400)
+            
+            # 将对话框居中显示在主窗口中央
+            dialog.move(
+                self.geometry().center().x() - dialog.width() // 2,
+                self.geometry().center().y() - dialog.height() // 2
+            )
+            
+            layout = QVBoxLayout(dialog)
+            
+            # 添加说明标签
+            label = QLabel("AI已生成以下角色，请选择一个或手动输入：")
+            layout.addWidget(label)
+            
+            # 创建角色列表
+            character_list = QListWidget()
+            for i, character in enumerate(characters):
+                item_text = f"【角色设计{i+1}】\n角色名称：{character['name']}\n角色背景：{character['background']}"
+                item = QListWidgetItem(item_text)
+                character_list.addItem(item)
+            layout.addWidget(character_list)
+            
+            # 添加手动输入框
+            manual_name_edit = QLineEdit()
+            manual_name_edit.setPlaceholderText("手动输入角色名称")
+            layout.addWidget(manual_name_edit)
+            manual_background_edit = QTextEdit()
+            manual_background_edit.setPlaceholderText("手动输入角色背景")
+            layout.addWidget(manual_background_edit)
+            
+            # 添加按钮
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            def on_accepted():
+                # 检查用户是否选择了列表中的角色
+                selected_items = character_list.selectedItems()
+                if selected_items:
+                    # 解析选中角色的信息
+                    selected_text = selected_items[0].text()
+                    lines = selected_text.split('\n')
+                    if len(lines) >= 3:
+                        # 提取角色名称和背景
+                        name = lines[1].replace("角色名称：", "").strip()
+                        background = lines[2].replace("角色背景：", "").strip()
+                        
+                        # 更新父对话框中的编辑框
+                        name_edit.setText(name)
+                        background_edit.setPlainText(background)
+                else:
+                    # 检查用户是否手动输入了角色信息
+                    manual_name = manual_name_edit.text().strip()
+                    manual_background = manual_background_edit.toPlainText().strip()
+                    
+                    if manual_name:
+                        name_edit.setText(manual_name)
+                        background_edit.setPlainText(manual_background)
+            
+            # 连接对话框的accepted信号
+            dialog.accepted.connect(on_accepted)
+            
+            # 显示对话框
+            self.log_message("显示角色选择对话框", "debug")
+            dialog.exec_()
+            
+        except Exception as e:
+            self.log_message(f"处理AI角色响应时发生异常: {str(e)}", "error")
+            import traceback
+            self.log_message(f"异常堆栈: {traceback.format_exc()}", "error")
+            QMessageBox.critical(self, "错误", f"处理AI角色响应时发生异常：{str(e)}")
+        
+        self.log_message("<<< 退出after_character_generation方法", "debug")
     
-        @pyqtSlot(object)
-        def invoke_show_success(self, show_success):
-            """在主线程中执行show_success函数"""
-            self.log_message("进入invoke_show_success方法", "debug")
-            try:
-                show_success()
-                self.log_message("show_success函数执行完成", "debug")
-            except Exception as e:
-                self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
-                import traceback
-                self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
-            self.log_message("退出invoke_show_success方法", "debug")
+    @pyqtSlot(object)
+    def invoke_show_success(self, show_success):
+        """在主线程中执行show_success函数"""
+        self.log_message("进入invoke_show_success方法", "debug")
+        try:
+            show_success()
+            self.log_message("show_success函数执行完成", "debug")
+        except Exception as e:
+            self.log_message(f"执行show_success时发生错误: {str(e)}", "error")
+            import traceback
+            self.log_message(f"错误堆栈: {traceback.format_exc()}", "error")
+        self.log_message("退出invoke_show_success方法", "debug")
     
     def generate_worldview(self):
         """使用AI生成世界观"""
@@ -1227,7 +1427,6 @@ class MainWindow(QMainWindow):
         prompt = f"""你是一位专业的小说世界观构建师，擅长创造各种类型的奇幻世界。请根据以下小说内容要求，构建一个完整的世界观设定：
 
 小说内容要求：{user_prompt}
-
 请提供以下内容的详细描述：
 1. 世界名称和基本描述
 2. 世界的地理分布描述
