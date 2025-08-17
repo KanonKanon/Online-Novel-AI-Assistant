@@ -1736,7 +1736,10 @@ class MainWindow(QMainWindow):
         # 加载小说大纲和已生成内容
         self.load_novel_outline()
         
-        # 加载角色信息
+        # 自动保存小说大纲
+        self.save_novel_outline()
+        
+        # 重新加载角色列表（可能有新角色添加）
         self.load_characters()
         
         # 重新检查是否有选中的章节（加载大纲后）
@@ -2324,78 +2327,11 @@ class MainWindow(QMainWindow):
         cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
         # 移除以[]包围的标记内容（英文方括号）
         cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
-        # 清理多余的空白行
-        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
-        
-        # 查找该章节在大纲中的信息
-        chapter_outline = None
-        for outline in self.novel_outline:
-            if outline['chapter_num'] == chapter_num:
-                chapter_outline = outline
-                break
-    
-        # 优化章节标题显示逻辑，避免重复显示"第X章"前缀
-        if chapter_title.startswith(f"第{chapter_num}章"):
-            # 如果chapter_title已经包含"第X章"前缀，则直接使用
-            display_title = chapter_title
-        elif chapter_outline:
-            # 如果没有前缀但有大纲信息，则添加前缀
-            display_title = f"第{chapter_num}章 {chapter_outline['title']}"
-        else:
-            # 如果既没有前缀也没有大纲信息，则使用默认格式
-            display_title = f"第{chapter_num}章 {chapter_title}"
-        
-        # 计算字数
-        char_count = len(cleaned_content.strip()) if cleaned_content else 0
-        chapter_title_with_count = f"{display_title}（本章正文共{char_count}字）"
-        
-        # 检查是否已经存在该章节项
-        if chapter_num in self.chapter_items_map:
-            # 更新现有项
-            chapter_item = self.chapter_items_map[chapter_num]
-            chapter_item['title_label'].setText(chapter_title_with_count)
-            chapter_item['content_text'].setPlainText(cleaned_content)
-        else:
-            # 添加新项
-            chapter_item = self.add_chapter_item(chapter_num, display_title, cleaned_content)
-            self.chapter_items_map[chapter_num] = chapter_item
-        
-        # 更新大纲列表相应章节的信息
-        if chapter_outline:
-            # 更新大纲列表中该章节的标题（如果需要）
-            title_edit = chapter_outline.get('title_edit')
-            
-            if title_edit:
-                # 只更新章节标题部分，不包含"第X章"前缀
-                if display_title.startswith(f"第{chapter_num}章 "):
-                    title_edit.setText(display_title[len(f"第{chapter_num}章 "):])
-                else:
-                    title_edit.setText(display_title)
-                
-            # 保存章节内容到大纲数据结构中（正确保存到content字段）
-            chapter_outline['content'] = cleaned_content
-    
-        # 强制更新UI
-        self.final_result.repaint()
-        self.final_result.scrollToBottom()
-        
-        # 自动保存小说大纲
-        self.save_novel_outline()
-
-    def on_chapter_generated(self, chapter_num, chapter_title, content):
-        """
-        处理章节生成完成事件
-        """
-        # 清理章节内容，移除AI生成的标记性内容
-        cleaned_content = content
-        # 移除常见的AI标记内容
-        import re
-        # 移除以【】包围的标记内容
-        cleaned_content = re.sub(r'【.*?】', '', cleaned_content)
-        # 移除以[]包围的标记内容（英文方括号）
-        cleaned_content = re.sub(r'\[.*?\]', '', cleaned_content)
-        # 清理多余的空白行
-        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content).strip()
+        # 只清理过多的空白行，但保留原有的换行符结构
+        # 将3个或以上的连续空行替换为2个空行，保留正常的段落间距
+        cleaned_content = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_content)
+        # 只去除首尾空白，但保留内容中的换行符
+        cleaned_content = cleaned_content.strip()
         
         # 查找该章节在大纲中的信息
         chapter_outline = None
@@ -2948,7 +2884,15 @@ class MainWindow(QMainWindow):
                 
                 # 如果该章节还没有被处理过且有内容，则添加到最终结果列表
                 if chapter_num not in processed_chapters and content:
-                    title = f"第{chapter_num}章 {outline['title']}"
+                    # 优化章节标题显示逻辑，避免重复显示"第X章"前缀（与on_chapter_generated函数保持一致）
+                    outline_title = outline['title']
+                    if outline_title.startswith(f"第{chapter_num}章"):
+                        # 如果outline_title已经包含"第X章"前缀，则直接使用
+                        title = outline_title
+                    else:
+                        # 如果没有前缀，则添加前缀
+                        title = f"第{chapter_num}章 {outline_title}"
+                        
                     chapter_item = self.add_chapter_item(chapter_num, title, content)
                     self.chapter_items_map[chapter_num] = chapter_item
                     
@@ -3096,7 +3040,8 @@ class MainWindow(QMainWindow):
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         
         # 下部分：章节内容
-        content_text = QTextEdit(content)
+        content_text = QTextEdit()
+        content_text.setPlainText(content)  # 使用setPlainText而不是构造函数传递content
         content_text.setMaximumHeight(200)  # 限制高度
         content_text.setReadOnly(True)
         content_text.setWordWrapMode(True)
