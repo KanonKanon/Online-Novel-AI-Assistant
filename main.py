@@ -1688,36 +1688,93 @@ class MainWindow(QMainWindow):
 
     # 添加导出小说的方法
     def export_novel(self):
-        content = self.final_result.toPlainText()
-        if not content:
-            QMessageBox.warning(self, "警告", "没有可导出的小说内容！")
-            return
+        """导出小说为txt文件，从"小说大纲.json"文件中读取标题和content内容"""
+        try:
+            # 从"小说大纲.json"文件中加载小说内容
+            import json
+            import os
             
-        # 获取小说标题（使用用户输入作为文件名）
-        novel_title = self.user_input.toPlainText().strip()[:20]  # 限制文件名长度
-        if not novel_title:
+            # 检查文件是否存在
+            if not os.path.exists("小说大纲.json"):
+                QMessageBox.information(self, "提示", "没有可导出的小说内容")
+                return
+            
+            # 读取文件内容
+            with open("小说大纲.json", "r", encoding="utf-8") as f:
+                file_content = f.read()
+                
+                # 检查文件是否为空
+                if not file_content.strip():
+                    QMessageBox.information(self, "提示", "没有可导出的小说内容")
+                    return
+                
+                # 尝试解析 JSON
+                outline_data = json.loads(file_content)
+        
+            # 检查数据格式是否正确
+            if not isinstance(outline_data, dict):
+                raise ValueError("大纲数据格式不正确")
+            
+            chapters = outline_data.get("chapters", [])
+            if not isinstance(chapters, list):
+                raise ValueError("章节数据格式不正确")
+                
+            if not chapters:
+                QMessageBox.information(self, "提示", "没有可导出的小说内容")
+                return
+            
+            # 获取小说标题（从第一个章节获取）
             novel_title = "未命名小说"
+            if chapters and len(chapters) > 0:
+                first_chapter = chapters[0]
+                if isinstance(first_chapter, dict):
+                    first_chapter_title = first_chapter.get('title', '')
+                    if first_chapter_title:
+                        # 如果标题包含"第X章"前缀，去掉前缀作为小说标题
+                        if first_chapter_title.startswith("第") and "章" in first_chapter_title:
+                            # 提取章节后面的标题部分
+                            parts = first_chapter_title.split("章", 1)
+                            if len(parts) > 1 and parts[1].strip():
+                                novel_title = parts[1].strip()
+                        else:
+                            novel_title = first_chapter_title
             
-        # 清理文件名中的非法字符
-        import re
-        novel_title = re.sub(r'[\\/:*?"<>|]', '_', novel_title)
-        
-        # 保存文件
-        from PyQt5.QtWidgets import QFileDialog
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, 
-            "导出小说", 
-            f"{novel_title}.txt", 
-            "文本文件 (*.txt)"
-        )
-        
-        if file_path:
-            try:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                QMessageBox.information(self, "成功", f"小说已成功导出到:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"导出失败：{str(e)}")
+            # 清理文件名中的非法字符
+            import re
+            novel_title = re.sub(r'[\\/:*?"<>|]', '_', novel_title)
+            
+            # 选择保存位置
+            filename, _ = QFileDialog.getSaveFileName(
+                self, 
+                "导出小说", 
+                f"{novel_title}.txt", 
+                "文本文件 (*.txt)"
+            )
+            
+            if filename:
+                # 写入文件
+                with open(filename, "w", encoding="utf-8") as f:
+                    for chapter in chapters:
+                        if not isinstance(chapter, dict):
+                            continue
+                            
+                        title = chapter.get('title', '')
+                        content = chapter.get('content', '')
+                        
+                        if title:
+                            f.write(f"{title}\n\n")
+                        if content:
+                            f.write(f"{content}\n\n")
+                        
+                QMessageBox.information(self, "成功", f"小说已导出到: {filename}")
+                self.statusBar().showMessage(f'小说已导出到: {filename}')
+                
+        except json.JSONDecodeError as e:
+            error_msg = f"加载小说大纲时发生JSON解析错误: {str(e)}"
+            QMessageBox.critical(self, "错误", error_msg)
+            self.role_output.append(f"[系统] {error_msg}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"导出小说时出错: {e}")
 
     def show_local_settings(self):
         """显示本地设置对话框"""
